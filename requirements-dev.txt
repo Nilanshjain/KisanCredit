@@ -1,0 +1,17 @@
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# Code Quality
+black==23.11.0
+ruff==0.1.6
+
+# Load Testing
+locust==2.17.0
+
+# Notebooks
+jupyter==1.0.0
+matplotlib==3.8.2
+seaborn==0.13.0
