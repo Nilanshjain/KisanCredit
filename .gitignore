@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code - IMPORTANT: Ignore all Claude-related files
+.claude/
+.claude_code/
+*.claude
+.claude_history
+.clauderc
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.hypothesis/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Data (keep structure, ignore data)
+data/raw/*.csv
+data/raw/*.parquet
+data/processed/*.csv
+data/processed/*.parquet
+data/synthetic/*.csv
+data/synthetic/*.parquet
+
+# Models (ignore large model files)
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.pt
+mlruns/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.dockerignore
+
+# Markdown files - IMPORTANT: Ignore all .md except README.md
+*.md
+!README.md
+
+# OS
+Thumbs.db
+
+# Temporary files
+*.tmp
+temp/
+tmp/
