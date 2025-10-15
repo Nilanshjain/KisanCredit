@@ -1,0 +1,31 @@
+=== PREDICTION LATENCY BENCHMARK ===
+
+Single Prediction Latency:
+  mean: 10.57ms
+  median: 9.26ms
+  p50: 9.26ms
+  p95: 15.47ms
+  p99: 29.84ms
+  min: 7.72ms
+  max: 131.38ms
+  std: 7.01ms
+
+Batch Prediction Throughput:
+
+  Batch size 10:
+    Total time: 22.60ms
+    Throughput: 442 predictions/sec
+    Avg latency: 2.26ms
+
+  Batch size 100:
+    Total time: 15.90ms
+    Throughput: 6288 predictions/sec
+    Avg latency: 0.16ms
+
+  Batch size 1000:
+    Total time: 41.66ms
+    Throughput: 24005 predictions/sec
+    Avg latency: 0.04ms
+
+Target: <100ms P95 latency
+Status: PASS
