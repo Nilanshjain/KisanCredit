@@ -1,0 +1,128 @@
+C:\Users\Nilansh\Desktop\KisanCredit\venv\lib\site-packages\mlflow\utils\requirements_utils.py:20: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources  # noqa: TID251
+C:\Users\Nilansh\Desktop\KisanCredit\venv\lib\site-packages\pydantic\_internal\_fields.py:149: UserWarning: Field "model_server_url" has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+C:\Users\Nilansh\Desktop\KisanCredit\venv\lib\site-packages\pydantic\_internal\_config.py:318: UserWarning: Valid config keys have changed in V2:
+* 'schema_extra' has been renamed to 'json_schema_extra'
+  warnings.warn(message, UserWarning)
+C:\Users\Nilansh\Desktop\KisanCredit\venv\lib\site-packages\pydantic\_internal\_fields.py:149: UserWarning: Field "model_path" has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ('settings_',)`.
+  warnings.warn(
+
+======================================================================
+KISANCREDIT - AI LOAN UNDERWRITING DEMO
+======================================================================
+
+Alternative data-driven profitability scoring for rural India
+Predicts loan profitability using SMS, contacts, location, and behavior
+
+Loading model: profitability_model_latest.pkl
+2025-10-15 21:20:43 [info     ] Model loaded successfully      load_time_ms=14.95 model_path=models\profitability_model_latest.pkl n_features=45
+
+======================================================================
+MODEL INFORMATION
+======================================================================
+
+Model Details:
+  Number of features: 45
+  Number of trees: 500
+  Model type: LightGBM Gradient Boosting
+
+Top 10 Most Important Features:
+   1. behavioral_risk_score                     2350071.5
+   2. social_total_contacts                     1061917.9
+   3. behavioral_night_transaction_ratio         776756.3
+   4. behavioral_financial_literacy              264493.7
+   5. behavioral_location_changes                188110.8
+   6. behavioral_gambling_flag                   173106.6
+   7. social_network_strength                    160905.0
+   8. social_network_diversity                    99682.7
+   9. social_communication_frequency              92410.4
+  10. social_business_ratio                       90559.8
+
+======================================================================
+DEMO: SINGLE PREDICTIONS
+======================================================================
+
+--- GOOD APPLICANT ---
+2025-10-15 21:20:43 [warning  ] Missing features: {'income_max_transaction', 'behavioral_gambling_flag', 'behavioral_location_stability', 'discipline_failed_transaction_ratio', 'location_area_type_urban', 'discipline_savings_behavior', 'income_transaction_frequency', 'expense_consistency', 'income_min_transaction', 'location_unique_count', 'social_network_diversity', 'savings_potential', 'discipline_credit_usage_score', 'bill_payment_regularity', 'location_diversity_score', 'discretionary_spending_ratio', 'essential_expense_ratio', 'location_travel_radius', 'social_business_size', 'income_regularity', 'social_business_ratio', 'expense_spike_count', 'income_quartile_ratio', 'social_government_connections', 'location_avg_distance_from_home', 'discipline_bill_timeliness'}. Filling with zeros.
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=9.27 score=1.0
+Profitability Score: 1.000
+Confidence: 0.300
+Decision: APPROVE
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=2.0 score=1.0
+
+Top Contributing Factors:
+  - social_total_contacts: +371671272.574
+  - social_communication_frequency: +5544622.372
+  - social_family_size: +2314525.925
+
+--- AVERAGE APPLICANT ---
+2025-10-15 21:20:43 [warning  ] Missing features: {'income_max_transaction', 'behavioral_gambling_flag', 'behavioral_location_stability', 'discipline_failed_transaction_ratio', 'location_area_type_urban', 'discipline_savings_behavior', 'income_transaction_frequency', 'expense_consistency', 'income_min_transaction', 'location_unique_count', 'social_network_diversity', 'savings_potential', 'discipline_credit_usage_score', 'bill_payment_regularity', 'location_diversity_score', 'discretionary_spending_ratio', 'essential_expense_ratio', 'location_travel_radius', 'social_business_size', 'income_regularity', 'social_business_ratio', 'expense_spike_count', 'income_quartile_ratio', 'social_government_connections', 'location_avg_distance_from_home', 'discipline_bill_timeliness'}. Filling with zeros.
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=6.0 score=1.0
+Profitability Score: 1.000
+Confidence: 0.300
+Decision: APPROVE
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=2.0 score=1.0
+
+Top Contributing Factors:
+  - social_total_contacts: +159287688.246
+  - social_communication_frequency: +2310259.322
+  - behavioral_location_changes: +1504886.485
+
+--- RISKY APPLICANT ---
+2025-10-15 21:20:43 [warning  ] Missing features: {'income_max_transaction', 'behavioral_gambling_flag', 'behavioral_location_stability', 'discipline_failed_transaction_ratio', 'location_area_type_urban', 'discipline_savings_behavior', 'income_transaction_frequency', 'expense_consistency', 'income_min_transaction', 'location_unique_count', 'social_network_diversity', 'savings_potential', 'discipline_credit_usage_score', 'bill_payment_regularity', 'location_diversity_score', 'discretionary_spending_ratio', 'essential_expense_ratio', 'location_travel_radius', 'social_business_size', 'income_regularity', 'social_business_ratio', 'expense_spike_count', 'income_quartile_ratio', 'social_government_connections', 'location_avg_distance_from_home', 'discipline_bill_timeliness'}. Filling with zeros.
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=6.0 score=1.0
+Profitability Score: 1.000
+Confidence: 0.300
+Decision: APPROVE
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=2.0 score=1.0
+
+Top Contributing Factors:
+  - social_total_contacts: +74334254.515
+  - behavioral_location_changes: +3385994.591
+  - social_communication_frequency: +1108924.474
+
+======================================================================
+DEMO: BATCH PREDICTIONS
+======================================================================
+
+Processing batch of 10 applications...
+2025-10-15 21:20:43 [warning  ] Missing features: {'income_max_transaction', 'behavioral_gambling_flag', 'behavioral_location_stability', 'discipline_failed_transaction_ratio', 'location_area_type_urban', 'discipline_savings_behavior', 'income_transaction_frequency', 'expense_consistency', 'income_min_transaction', 'location_unique_count', 'social_network_diversity', 'savings_potential', 'discipline_credit_usage_score', 'bill_payment_regularity', 'location_diversity_score', 'discretionary_spending_ratio', 'essential_expense_ratio', 'location_travel_radius', 'social_business_size', 'income_regularity', 'social_business_ratio', 'expense_spike_count', 'income_quartile_ratio', 'social_government_connections', 'location_avg_distance_from_home', 'discipline_bill_timeliness'}. Filling with zeros.
+2025-10-15 21:20:43 [info     ] Batch prediction completed     avg_score=1.0 n_predictions=10 prediction_time_sec=0.01 throughput_per_sec=1428.77
+
+Batch Results:
+  Total applications: 10
+  Approved: 10
+  Rejected: 0
+  Avg Score: 1.000
+  Avg Confidence: 0.300
+
+Score Distribution:
+min    1.0
+25%    1.0
+50%    1.0
+75%    1.0
+max    1.0
+2025-10-15 21:20:43 [debug    ] Prediction completed           prediction_time_ms=1.58 score=1.0
+
+======================================================================
+SYSTEM HEALTH CHECK
+======================================================================
+
+Model Status: HEALTHY
+Prediction Latency: 1.58ms
+Features Loaded: 45
+
+======================================================================
+DEMO COMPLETE
+======================================================================
+
+Next steps:
+  - Start Docker stack: docker-compose up -d
+  - Access API docs: http://localhost:8000/docs
+  - Run benchmark: python scripts/benchmark_latency.py
+  - Generate more data: python scripts/generate_data.py
