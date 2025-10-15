@@ -122,8 +122,12 @@ class DataProcessor:
 
         # Convert object columns to category where appropriate
         for col in df.select_dtypes(include=['object']).columns:
-            if df[col].nunique() / len(df) < 0.5:  # Less than 50% unique values
-                df[col] = df[col].astype('category')
+            try:
+                if df[col].nunique() / len(df) < 0.5:  # Less than 50% unique values
+                    df[col] = df[col].astype('category')
+            except TypeError:
+                # Skip columns with unhashable types (lists, dicts)
+                continue
 
         return df
 
@@ -149,5 +153,6 @@ class DataProcessor:
         else:
             raise ValueError(f"Unsupported format: {format}")
 
-        file_size_mb = pd.io.common.get_file_size(output_path) / (1024 ** 2)
-        logger.info(f"✓ Saved {len(df)} records ({file_size_mb:.2f} MB) to {output_path}")
+        import os
+        file_size_mb = os.path.getsize(output_path) / (1024 ** 2)
+        logger.info(f"[OK] Saved {len(df)} records ({file_size_mb:.2f} MB) to {output_path}")

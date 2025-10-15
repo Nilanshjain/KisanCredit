@@ -340,7 +340,7 @@ class SyntheticDataGenerator:
                 print(f"Error generating application {i}: {e}")
                 continue
 
-        print(f"✓ Generated {len(applications)} valid applications")
+        print(f"[OK] Generated {len(applications)} valid applications")
 
         # Convert to DataFrame
         df = pd.DataFrame(applications)
@@ -353,6 +353,6 @@ class SyntheticDataGenerator:
     ) -> None:
         """Save dataset to parquet format."""
         df.to_parquet(output_path, index=False, compression='snappy')
-        print(f"✓ Dataset saved to {output_path}")
+        print(f"[OK] Dataset saved to {output_path}")
         print(f"  Size: {df.shape[0]} rows × {df.shape[1]} columns")
         print(f"  Memory: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
