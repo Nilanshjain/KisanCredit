@@ -34,12 +34,15 @@ ENV/
 *~
 .DS_Store
 
-# Claude Code - IMPORTANT: Ignore all Claude-related files
+# Claude Code — never ship any Claude-related artifact to the public repo
 .claude/
 .claude_code/
 *.claude
 .claude_history
 .clauderc
+CLAUDE.md
+PLAN.md
+.plan.md
 
 # Environment Variables
 .env
