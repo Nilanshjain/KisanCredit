@@ -16,10 +16,22 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
 
+    # Security / Authentication
+    secret_key: str = Field(
+        default="kisan-credit-jwt-secret-key-change-in-production-at-least-32-chars-long",
+        alias="SECRET_KEY"
+    )
+    access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+
     # Database
     database_url: str = Field(
         default="postgresql+asyncpg://user:pass@localhost:5432/kisancredit",
         alias="DATABASE_URL"
+    )
+    database_url_sync: str = Field(
+        default="postgresql://user:pass@localhost:5432/kisancredit",
+        alias="DATABASE_URL_SYNC"
     )
 
     # Redis

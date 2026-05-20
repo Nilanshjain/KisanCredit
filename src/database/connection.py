@@ -203,5 +203,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         async def endpoint(db: AsyncSession = Depends(get_db)):
             result = await db.execute(query)
     """
+    # Auto-connect if not connected
+    if not db_manager._connected:
+        await db_manager.connect()
+
     async with db_manager.get_session() as session:
         yield session

@@ -46,6 +46,7 @@ ENV/
 .env.local
 .env.*.local
 *.env
+*.bak
 
 # Testing
 .coverage
@@ -54,17 +55,17 @@ htmlcov/
 .tox/
 .hypothesis/
 
-# Jupyter Notebooks
+# Jupyter Notebooks — keep tracked notebooks, ignore checkpoints
 .ipynb_checkpoints/
-*.ipynb
+notebooks/.ipynb_checkpoints/
 
-# Data (keep structure, ignore data)
-data/raw/*.csv
-data/raw/*.parquet
-data/processed/*.csv
-data/processed/*.parquet
-data/synthetic/*.csv
-data/synthetic/*.parquet
+# Data — ignore raw/processed/synthetic data files, keep folder structure via .gitkeep
+data/raw/
+data/processed/
+data/synthetic/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/synthetic/.gitkeep
 
 # Models (ignore large model files)
 models/*.pkl
@@ -85,9 +86,13 @@ logs/
 # Docker
 .dockerignore
 
-# Markdown files - IMPORTANT: Ignore all .md except README.md
-*.md
-!README.md
+# Markdown files — ignore root-level handbook bloat, keep README/CLAUDE/docs tracked
+/COMPLETE_TECHNICAL_HANDBOOK.md
+/KISANCREDIT_Technical_Handbook.md
+/INTERVIEW_PREP_GUIDE.md
+/PHASE_2_3_PLAN.md
+/IMPLEMENTATION_STATUS.md
+/PHASE_*.md
 
 # OS
 Thumbs.db
@@ -96,3 +101,19 @@ Thumbs.db
 *.tmp
 temp/
 tmp/
+nul
+
+# Test files in root only (cleanup debris, not tests/ directory)
+/test_*.py
+/quick_test.py
+
+# Frontend (Next.js)
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.turbo/
+
+# Build artifacts
+*.tgz
+package-lock.json
+yarn.lock

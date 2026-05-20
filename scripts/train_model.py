@@ -32,11 +32,14 @@ def generate_synthetic_data(n_samples: int = 10000) -> pd.DataFrame:
     logger.info(f"Generating {n_samples} synthetic training samples...")
 
     generator = SyntheticDataGenerator()
-    applications = generator.generate_dataset(n_samples)
+    applications_df = generator.generate_dataset(n_samples)
 
     # Extract features
     logger.info("Extracting features...")
     pipeline = FeatureEngineeringPipeline()
+
+    # Convert DataFrame to list of dicts for feature extraction
+    applications = applications_df.to_dict('records')
     features_df = pipeline.extract_batch(applications)
 
     # Generate target variable (profitability score)

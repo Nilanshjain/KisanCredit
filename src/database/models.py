@@ -37,6 +37,11 @@ class User(Base):
     phone_number = Column(String(20), unique=True, index=True)
     email = Column(String(255), unique=True, nullable=True, index=True)
     full_name = Column(String(255))
+    password_hash = Column(String(255), nullable=True)
+
+    # Email verification
+    email_verified = Column(Boolean, default=False)
+    email_verified_at = Column(DateTime, nullable=True)
 
     # KYC information
     aadhaar_number = Column(String(12), unique=True, nullable=True)

@@ -36,6 +36,12 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_email(session: AsyncSession, email: str) -> Optional[User]:
+        """Get user by email."""
+        result = await session.execute(select(User).where(User.email == email))
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def update(session: AsyncSession, user_id: str, update_data: Dict[str, Any]) -> Optional[User]:
         """Update user."""
         stmt = update(User).where(User.user_id == user_id).values(**update_data)
