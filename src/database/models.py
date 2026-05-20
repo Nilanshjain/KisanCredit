@@ -126,6 +126,12 @@ class Application(Base):
     user = relationship("User", back_populates="applications")
     predictions = relationship("Prediction", back_populates="application", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="application", cascade="all, delete-orphan")
+    status_events = relationship(
+        "ApplicationStatusEvent",
+        back_populates="application",
+        cascade="all, delete-orphan",
+        order_by="ApplicationStatusEvent.occurred_at",
+    )
 
     # Indexes
     __table_args__ = (
@@ -137,6 +143,38 @@ class Application(Base):
 
     def __repr__(self):
         return f"<Application(id={self.id}, application_id={self.application_id}, status={self.status})>"
+
+
+class ApplicationStatusEvent(Base):
+    """Audit-grade timeline of every status transition an application has gone through.
+
+    Drives the user-facing lifecycle timeline (submitted -> under_review -> decided
+    -> disbursed) and the admin override audit trail. Append-only — never updated.
+    """
+
+    __tablename__ = "application_status_events"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    application_id = Column(String(50), ForeignKey("applications.id"), nullable=False, index=True)
+
+    from_status = Column(String(50), nullable=True)   # null on the initial 'submitted' event
+    to_status = Column(String(50), nullable=False)
+
+    actor_type = Column(String(20), nullable=False, default="system")  # system | user | admin
+    actor_id = Column(String(100), nullable=True)                       # admin user_id when overriding
+    reason = Column(Text, nullable=True)                                # free text for admin overrides / errors
+
+    occurred_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    application = relationship("Application", back_populates="status_events")
+
+    __table_args__ = (
+        Index('idx_status_event_app_time', 'application_id', 'occurred_at'),
+        Index('idx_status_event_actor', 'actor_type'),
+    )
+
+    def __repr__(self):
+        return f"<StatusEvent(app={self.application_id}, {self.from_status}->{self.to_status} by {self.actor_type})>"
 
 
 class Prediction(Base):

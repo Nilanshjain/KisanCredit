@@ -17,6 +17,9 @@ __all__ = [
     "PredictionResponse",
     "ExplanationResponse",
     "ApplicationResponse",
+    "ApplicationSubmittedResponse",
+    "ApplicationTimelineEvent",
+    "ApplicationTimelineResponse",
     "ApplicationDetailResponse",
     "PredictionDetail",
     "HealthResponse",
@@ -45,7 +48,26 @@ class SMSTransaction(BaseModel):
     amount: float
     transaction_type: str
     merchant_category: Optional[str] = None
+    # Legacy columns the feature extractors read (named for the original
+    # synthetic training set). Both default from sibling fields when omitted.
+    source: Optional[str] = None
+    message: Optional[str] = None
     is_credit: bool
+
+    @validator('source', always=True)
+    def _default_source_from_category(cls, v, values):
+        return v or values.get('merchant_category')
+
+    @validator('message', always=True)
+    def _default_message(cls, v, values):
+        if v is not None:
+            return v
+        # Build a plausible SMS body so the discipline extractor's keyword scans
+        # (fail/bounce/reject, credit card) match nothing — i.e. clean record.
+        kind = "credited" if values.get('is_credit') else "debited"
+        source = values.get('source') or values.get('merchant_category') or 'merchant'
+        amount = values.get('amount') or 0
+        return f"Rs {amount:.0f} {kind} via {source}"
 
 
 class ContactMetadata(BaseModel):
@@ -246,6 +268,59 @@ class ApplicationResponse(BaseModel):
                 "submitted_at": "2024-01-15T10:30:00",
                 "processing_time_ms": 45.8,
                 "message": "Application processed successfully"
+            }
+        }
+
+
+class ApplicationSubmittedResponse(BaseModel):
+    """Returned by POST /applications/simple in the async-lifecycle flow.
+
+    No decision yet — caller should poll GET /applications/{id}/timeline (and
+    the application detail endpoint) to watch the application progress through
+    submitted -> under_review -> decided.
+    """
+    application_id: str
+    status: str = "submitted"
+    submitted_at: datetime
+    message: str = "Application submitted. Processing will complete within ~15 seconds."
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "application_id": "APP_ABC123456789",
+                "status": "submitted",
+                "submitted_at": "2026-05-20T17:00:00Z",
+                "message": "Application submitted. Processing will complete within ~15 seconds.",
+            }
+        }
+
+
+class ApplicationTimelineEvent(BaseModel):
+    """A single status transition in an application's lifecycle."""
+    from_status: Optional[str] = None
+    to_status: str
+    actor_type: str  # system | user | admin
+    actor_id: Optional[str] = None
+    reason: Optional[str] = None
+    occurred_at: datetime
+
+
+class ApplicationTimelineResponse(BaseModel):
+    """Ordered list of status transitions for an application."""
+    application_id: str
+    current_status: str
+    events: List[ApplicationTimelineEvent]
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "application_id": "APP_ABC123456789",
+                "current_status": "decided",
+                "events": [
+                    {"from_status": None, "to_status": "submitted", "actor_type": "user", "occurred_at": "2026-05-20T17:00:00Z"},
+                    {"from_status": "submitted", "to_status": "under_review", "actor_type": "system", "occurred_at": "2026-05-20T17:00:05Z"},
+                    {"from_status": "under_review", "to_status": "decided", "actor_type": "system", "occurred_at": "2026-05-20T17:00:15Z"},
+                ],
             }
         }
 

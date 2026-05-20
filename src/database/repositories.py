@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 
-from .models import User, Application, Prediction, AuditLog, ModelMetrics, CacheMetrics
+from .models import User, Application, Prediction, AuditLog, ModelMetrics, CacheMetrics, ApplicationStatusEvent
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -115,6 +115,59 @@ class ApplicationRepository:
             select(func.count(Application.id)).where(Application.status == status)
         )
         return result.scalar()
+
+
+class ApplicationStatusRepository:
+    """Append-only audit trail of every application status transition."""
+
+    @staticmethod
+    async def record_transition(
+        session: AsyncSession,
+        application_id: str,                       # the DB primary key, not public application_id
+        from_status: Optional[str],
+        to_status: str,
+        actor_type: str = "system",                # system | user | admin
+        actor_id: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> ApplicationStatusEvent:
+        event = ApplicationStatusEvent(
+            application_id=application_id,
+            from_status=from_status,
+            to_status=to_status,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            reason=reason,
+        )
+        session.add(event)
+        await session.flush()
+        logger.info(
+            "Status transition recorded",
+            application_id=application_id,
+            transition=f"{from_status}->{to_status}",
+            actor=actor_type,
+        )
+        return event
+
+    @staticmethod
+    async def get_timeline(session: AsyncSession, application_db_id: str) -> List[ApplicationStatusEvent]:
+        """Return events ordered oldest-first for UI timeline rendering."""
+        result = await session.execute(
+            select(ApplicationStatusEvent)
+            .where(ApplicationStatusEvent.application_id == application_db_id)
+            .order_by(ApplicationStatusEvent.occurred_at.asc())
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_timeline_by_public_id(
+        session: AsyncSession,
+        public_application_id: str,
+    ) -> List[ApplicationStatusEvent]:
+        """Same as get_timeline but resolves via the public application_id (APP_XXX...)."""
+        app = await ApplicationRepository.get_by_id(session, public_application_id)
+        if not app:
+            return []
+        return await ApplicationStatusRepository.get_timeline(session, app.id)
 
 
 class PredictionRepository:

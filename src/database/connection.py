@@ -126,11 +126,12 @@ class DatabaseManager:
         try:
             start_time = time.time()
 
-            # Test connection with simple query
+            # Test connection with simple query. session.execute() in async sessions
+            # returns a sync Result object; fetchone() is NOT awaitable on it.
             async with self.get_session() as session:
                 from sqlalchemy import text
                 result = await session.execute(text("SELECT 1"))
-                await result.fetchone()
+                result.fetchone()
 
             latency = (time.time() - start_time) * 1000
 

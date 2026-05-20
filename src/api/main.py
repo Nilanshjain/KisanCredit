@@ -7,7 +7,21 @@ Provides endpoints for:
 - Health checks and metrics
 """
 
-from fastapi import FastAPI, HTTPException, status, Request, Depends
+# Force stdout/stderr to UTF-8 before any other module loads. On Windows the
+# default codec is cp1252 which can't encode common chars (rupee symbol, bullet
+# points, Unicode in tracebacks); structlog/uvicorn would crash mid-request
+# with a UnicodeEncodeError. Linux/Render is UTF-8 by default so this is a
+# no-op there. Must come before any "import" that might log on module load.
+import sys as _sys
+for _stream in (_sys.stdout, _sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+import asyncio
+
+from fastapi import FastAPI, HTTPException, status, Request, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware as FastAPICORSMiddleware
 from contextlib import asynccontextmanager
@@ -23,6 +37,9 @@ from .schemas import (
     PredictionResponse,
     ExplanationResponse,
     ApplicationResponse,
+    ApplicationSubmittedResponse,
+    ApplicationTimelineEvent,
+    ApplicationTimelineResponse,
     ApplicationDetailResponse,
     PredictionDetail,
     HealthResponse,
@@ -44,7 +61,12 @@ from ..features import FeatureEngineeringPipeline
 from ..features.feature_engineering import FeatureExtractionError
 from ..utils.logger import get_logger
 from ..utils.config import settings
-from ..database.repositories import ApplicationRepository, PredictionRepository
+from ..database.repositories import (
+    ApplicationRepository,
+    PredictionRepository,
+    ApplicationStatusRepository,
+    UserRepository,
+)
 from ..database.connection import get_db, db_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -277,14 +299,22 @@ async def submit_application(
             loan_amount=application.loan_amount
         )
 
-        # Convert to dictionary format for feature extraction
+        # model_dump(mode='json') ensures nested datetimes (in SMS timestamps) become ISO strings
+        # so the JSON column serializer doesn't reject the payload.
+        sms_dump = [txn.model_dump(mode='json') for txn in application.sms_transactions]
+        contact_dump = application.contact_metadata.model_dump(mode='json')
+        location_dump = application.location_pattern.model_dump(mode='json')
+        behavioral_dump = application.behavioral_data.model_dump(mode='json')
+
+        # Feature extractors take the raw dict shape — pydantic .model_dump() with mode='json'
+        # gives strings for datetimes, which the extractors handle (they parse if needed).
         app_data = {
             'application_id': application_id,
             'user_id': application.user_id,
-            'sms_transactions': [txn.dict() for txn in application.sms_transactions],
-            'contact_metadata': application.contact_metadata.dict(),
-            'location_pattern': application.location_pattern.dict(),
-            'behavioral_data': application.behavioral_data.dict()
+            'sms_transactions': sms_dump,
+            'contact_metadata': contact_dump,
+            'location_pattern': location_dump,
+            'behavioral_data': behavioral_dump,
         }
 
         # Extract features
@@ -302,21 +332,20 @@ async def submit_application(
 
         processing_time = (time.time() - start_time) * 1000
 
-        # Save application to database
         db_application = await ApplicationRepository.create(session, {
             'application_id': application_id,
             'user_id': application.user_id,
             'loan_amount': application.loan_amount,
-            'loan_purpose': 'General',  # Default purpose
+            'loan_purpose': 'General',
             'status': 'processed',
-            'sms_transactions': [txn.dict() for txn in application.sms_transactions],
-            'contact_metadata': application.contact_metadata.dict(),
-            'location_pattern': application.location_pattern.dict(),
-            'behavioral_data': application.behavioral_data.dict(),
+            'sms_transactions': sms_dump,
+            'contact_metadata': contact_dump,
+            'location_pattern': location_dump,
+            'behavioral_data': behavioral_dump,
             'extracted_features': features,
             'processing_time_ms': processing_time,
             'submitted_at': datetime.utcnow(),
-            'processed_at': datetime.utcnow()
+            'processed_at': datetime.utcnow(),
         })
 
         # Save prediction to database
@@ -387,31 +416,45 @@ def _synthesize_application_payload(simple: SimpleLoanApplicationRequest) -> dic
     txns: list[dict] = []
     now = datetime.utcnow()
 
-    # One credit per month (salary-like), spaced ~30 days apart
+    # `source` is what the feature extractors actually read (legacy column from
+    # the synthetic training set). `merchant_category` stays in the public schema
+    # for API stability. They carry the same semantic data here.
+    income_sources = ["Salary", "Freelance"]  # >1 distinct gives a non-zero income_source_diversity
+    debit_categories = [
+        # essential (recognized by expense + discipline extractors)
+        "Electricity Bill", "Mobile Recharge", "Grocery", "Loan EMI",
+        # mixed essentials/discretionary
+        "Insurance", "Medical",
+        # discretionary
+        "Restaurant", "Shopping",
+    ]
+
+    # Credits: one per month from the primary source, plus one occasional secondary
     for m in range(months):
+        src = income_sources[0] if m % 2 == 0 else income_sources[1]
         txns.append({
             "transaction_id": f"TXN_C_{m}_{uuid.uuid4().hex[:6]}",
             "timestamp": (now - timedelta(days=30 * m)).isoformat(),
             "amount": float(simple.monthly_income),
             "transaction_type": "credit",
-            "merchant_category": "salary",
+            "merchant_category": src,
+            "source": src,
             "is_credit": True,
         })
 
-    # Multiple debits per month covering essentials + discretionary
-    essentials_share = 0.6
-    n_debits_per_month = 6
+    # Debits: spread across recognised categories
+    n_debits_per_month = len(debit_categories)
     for m in range(months):
-        for d in range(n_debits_per_month):
-            day_offset = 30 * m + (d * 4 + 2)
+        for d, category in enumerate(debit_categories):
+            day_offset = 30 * m + (d * 3 + 2)
             amt = simple.monthly_expenses / n_debits_per_month
-            is_essential = d < int(n_debits_per_month * essentials_share)
             txns.append({
                 "transaction_id": f"TXN_D_{m}_{d}_{uuid.uuid4().hex[:6]}",
                 "timestamp": (now - timedelta(days=day_offset)).isoformat(),
                 "amount": float(amt),
                 "transaction_type": "debit",
-                "merchant_category": "essentials" if is_essential else "discretionary",
+                "merchant_category": category,
+                "source": category,
                 "is_credit": False,
             })
 
@@ -446,26 +489,270 @@ def _synthesize_application_payload(simple: SimpleLoanApplicationRequest) -> dic
     }
 
 
+# --- lifecycle constants ---
+# Real loans take days to decide. We compress to ~15s so the UX feels like a
+# real product (not "instant decision") without being painful to wait through.
+LIFECYCLE_SUBMITTED_TO_REVIEW_SECONDS = 5
+LIFECYCLE_REVIEW_TO_DECIDED_SECONDS = 10
+INITIAL_STATUS = "submitted"
+REVIEW_STATUS = "under_review"
+DECIDED_STATUS = "decided"
+ERROR_STATUS = "rejected"
+
+
+async def _run_application_lifecycle(application_db_id: str, public_application_id: str) -> None:
+    """Background-task lifecycle worker.
+
+    Runs in its own DB session (the request session is already closed by the
+    time this fires). Walks the application through submitted -> under_review
+    -> decided, recording each transition as an event. Inference happens at
+    the decided transition. Any failure transitions to rejected with a reason.
+    """
+    # Lazy import to avoid circulars at startup (db_manager is imported in main module scope anyway,
+    # but the background task needs its OWN session, not the per-request one)
+    from ..database.connection import db_manager
+    import pandas as pd
+
+    async def _new_session():
+        if not db_manager._connected:
+            await db_manager.connect()
+        return db_manager.session_factory()
+
+    # --- transition 1: submitted -> under_review ---
+    await asyncio.sleep(LIFECYCLE_SUBMITTED_TO_REVIEW_SECONDS)
+    session = await _new_session()
+    try:
+        await ApplicationRepository.update_status(
+            session, public_application_id, REVIEW_STATUS,
+        )
+        await ApplicationStatusRepository.record_transition(
+            session,
+            application_id=application_db_id,
+            from_status=INITIAL_STATUS,
+            to_status=REVIEW_STATUS,
+            actor_type="system",
+            reason="automated_review_started",
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    # --- transition 2: under_review -> decided (with inference) ---
+    await asyncio.sleep(LIFECYCLE_REVIEW_TO_DECIDED_SECONDS)
+    session = await _new_session()
+    try:
+        app = await ApplicationRepository.get_by_id(session, public_application_id)
+        if not app:
+            logger.error(f"Background task: application {public_application_id} vanished mid-lifecycle")
+            return
+
+        # Re-hydrate the payload that was persisted at submit time
+        app_data = {
+            'application_id': public_application_id,
+            'user_id': app.user_id,
+            'sms_transactions': app.sms_transactions or [],
+            'contact_metadata': app.contact_metadata or {},
+            'location_pattern': app.location_pattern or {},
+            'behavioral_data': app.behavioral_data or {},
+        }
+
+        try:
+            features = feature_pipeline.extract_features(app_data)
+            metadata_cols = ['application_id', 'user_id']
+            X = pd.DataFrame([{k: v for k, v in features.items() if k not in metadata_cols}])
+            result = predictor.predict(X, return_confidence=True)
+        except FeatureExtractionError as e:
+            # Bad data — transition to rejected with the extractor name so admin can debug
+            await ApplicationRepository.update_status(session, public_application_id, ERROR_STATUS)
+            await ApplicationStatusRepository.record_transition(
+                session,
+                application_id=application_db_id,
+                from_status=REVIEW_STATUS,
+                to_status=ERROR_STATUS,
+                actor_type="system",
+                reason=f"feature_extraction_failed: {e.extractor}",
+            )
+            await session.commit()
+            logger.warning(f"Lifecycle rejected {public_application_id}: {e}")
+            return
+        except Exception as e:
+            # Capture both type AND a short str(e) so the failure mode survives the
+            # lossy structured-logger / cp1252-stdout path on Windows. Keep ASCII-only
+            # in the reason so DB JSON storage never trips on encoding.
+            err_msg = str(e).encode('ascii', 'replace').decode('ascii')[:250]
+            await ApplicationRepository.update_status(session, public_application_id, ERROR_STATUS)
+            await ApplicationStatusRepository.record_transition(
+                session,
+                application_id=application_db_id,
+                from_status=REVIEW_STATUS,
+                to_status=ERROR_STATUS,
+                actor_type="system",
+                reason=f"inference_error: {e.__class__.__name__}: {err_msg}",
+            )
+            await session.commit()
+            # Avoid exc_info=True here: the trace can contain non-ASCII frames that
+            # the structured logger sometimes fails to encode on Windows consoles.
+            logger.error(
+                "Lifecycle inference failed",
+                application_id=public_application_id,
+                error_type=e.__class__.__name__,
+                error=err_msg,
+            )
+            return
+
+        # Persist features (numeric only — strip the metadata columns the pipeline
+        # tacks on, since extracted_features in the response schema is Dict[str, float])
+        metadata_keys = {'application_id', 'user_id'}
+        app.extracted_features = {k: float(v) for k, v in features.items() if k not in metadata_keys}
+        app.processing_time_ms = result.get('prediction_time_ms', 0.0)
+        app.processed_at = datetime.utcnow()
+        app.status = DECIDED_STATUS
+
+        prediction_id = f"PRED_{uuid.uuid4().hex[:12].upper()}"
+        await PredictionRepository.create(session, {
+            'prediction_id': prediction_id,
+            'application_id': app.id,
+            'profitability_score': result['score'],
+            'confidence': result.get('confidence', 0.0),
+            'decision': result['decision'],
+            'decision_threshold': 0.6,
+            'model_version': MODEL_VERSION,
+            'model_name': 'profitability_model',
+            'prediction_latency_ms': result.get('prediction_time_ms', 0.0),
+        })
+        await ApplicationStatusRepository.record_transition(
+            session,
+            application_id=application_db_id,
+            from_status=REVIEW_STATUS,
+            to_status=DECIDED_STATUS,
+            actor_type="system",
+            reason=f"decision={result['decision']} score={result['score']:.3f}",
+        )
+        await session.commit()
+        logger.info(
+            "Lifecycle decided",
+            application_id=public_application_id,
+            decision=result['decision'],
+            score=round(result['score'], 4),
+        )
+    finally:
+        await session.close()
+
+
 @app.post(
     "/api/v1/applications/simple",
-    response_model=ApplicationResponse,
+    response_model=ApplicationSubmittedResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def submit_simple_application(
     simple: SimpleLoanApplicationRequest,
+    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
-    """Submit a loan application from the simplified frontend form.
+    """Submit a loan application via the simplified frontend form.
 
-    The form collects basic personal + financial fields; this endpoint
-    synthesises a richer payload and dispatches into the same feature
-    pipeline as `/applications`. Server-side feature engineering ensures
-    the frontend never needs to know about the model's 45-feature schema.
+    Async-lifecycle flow: persist the application immediately in 'submitted'
+    status, schedule a background task that walks it through under_review ->
+    decided (with inference) over ~15 seconds, and return right away with the
+    application_id so the frontend can poll the timeline.
     """
     payload = _synthesize_application_payload(simple)
-    # Re-validate through the canonical request schema, then reuse the main path
     full_request = LoanApplicationRequest(**payload)
-    return await submit_application(full_request, session)
+    application_id = f"APP_{uuid.uuid4().hex[:12].upper()}"
+
+    # Resolve the user FK. applications.user_id references users.id (UUID PK),
+    # NOT the public user_id string. Look up by mobile (which the OTP flow uses
+    # to create the user); mint a lightweight shell if no row exists so anonymous
+    # curl tests and pre-auth flows still produce a valid FK.
+    user = await UserRepository.get_by_phone(session, simple.mobile)
+    if user is None:
+        user = await UserRepository.create(session, {
+            'user_id': f"USER_{simple.mobile}",
+            'phone_number': simple.mobile,
+            'full_name': simple.name,
+            'is_active': True,
+        })
+
+    logger.info(
+        "Application submitted (async lifecycle)",
+        application_id=application_id,
+        user_id=user.user_id,
+        user_db_id=user.id,
+        loan_amount=full_request.loan_amount,
+    )
+
+    # model_dump(mode='json') serialises nested datetime objects to ISO strings;
+    # plain .dict() leaves them as datetime objects which SQLAlchemy's JSON serializer rejects.
+    db_application = await ApplicationRepository.create(session, {
+        'application_id': application_id,
+        'user_id': user.id,
+        'loan_amount': full_request.loan_amount,
+        'loan_purpose': full_request.loan_purpose,
+        'status': INITIAL_STATUS,
+        'sms_transactions': [txn.model_dump(mode='json') for txn in full_request.sms_transactions],
+        'contact_metadata': full_request.contact_metadata.model_dump(mode='json'),
+        'location_pattern': full_request.location_pattern.model_dump(mode='json'),
+        'behavioral_data': full_request.behavioral_data.model_dump(mode='json'),
+        'submitted_at': datetime.utcnow(),
+    })
+    await ApplicationStatusRepository.record_transition(
+        session,
+        application_id=db_application.id,
+        from_status=None,
+        to_status=INITIAL_STATUS,
+        actor_type="user",
+        actor_id=user.user_id,
+    )
+    await session.commit()
+
+    # Schedule the lifecycle worker. BackgroundTasks runs *after* the response
+    # is sent — we pass the DB primary key + public ID so the worker can
+    # reopen its own session and look up the row.
+    background.add_task(_run_application_lifecycle, db_application.id, application_id)
+
+    return ApplicationSubmittedResponse(
+        application_id=application_id,
+        status=INITIAL_STATUS,
+        submitted_at=db_application.submitted_at,
+    )
+
+
+@app.get(
+    "/api/v1/applications/{application_id}/timeline",
+    response_model=ApplicationTimelineResponse,
+)
+async def get_application_timeline(
+    application_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """Ordered status-transition log for an application.
+
+    Frontend polls this every few seconds while the application is in a
+    non-terminal state (submitted / under_review) to render a live timeline.
+    """
+    application = await ApplicationRepository.get_by_id(session, application_id)
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application {application_id} not found",
+        )
+
+    events = await ApplicationStatusRepository.get_timeline(session, application.id)
+    return ApplicationTimelineResponse(
+        application_id=application_id,
+        current_status=application.status,
+        events=[
+            ApplicationTimelineEvent(
+                from_status=e.from_status,
+                to_status=e.to_status,
+                actor_type=e.actor_type,
+                actor_id=e.actor_id,
+                reason=e.reason,
+                occurred_at=e.occurred_at,
+            )
+            for e in events
+        ],
+    )
 
 
 # Get application by ID endpoint
@@ -692,14 +979,13 @@ async def batch_predict(request: BatchPredictionRequest):
                 # Generate application ID
                 application_id = f"APP_{uuid.uuid4().hex[:12].upper()}"
 
-                # Convert to dict for feature extraction
                 app_data = {
                     'application_id': application_id,
                     'user_id': app_request.user_id,
-                    'sms_transactions': [txn.dict() for txn in app_request.sms_transactions],
-                    'contact_metadata': app_request.contact_metadata.dict(),
-                    'location_pattern': app_request.location_pattern.dict(),
-                    'behavioral_data': app_request.behavioral_data.dict()
+                    'sms_transactions': [txn.model_dump(mode='json') for txn in app_request.sms_transactions],
+                    'contact_metadata': app_request.contact_metadata.model_dump(mode='json'),
+                    'location_pattern': app_request.location_pattern.model_dump(mode='json'),
+                    'behavioral_data': app_request.behavioral_data.model_dump(mode='json'),
                 }
 
                 # Extract features and predict
