@@ -21,11 +21,11 @@ import {
   Home,
   Sparkles
 } from 'lucide-react'
-import { submitApplication, getDecision, calculateEMI, type LoanApplicationData, type PredictionResponse } from '@/lib/api'
+import { submitApplication, type LoanApplicationData } from '@/lib/api'
 import { Button, Input, Card, Alert, Skeleton } from '@/components/ui'
 
 type FormStep = 'personal' | 'location' | 'loan' | 'financial' | 'digital'
-type FlowState = 'form' | 'loading' | 'result'
+type FlowState = 'form' | 'loading'   // 'result' lives on /dashboard/applications/[id] now
 
 const STEPS = [
   { id: 'personal', title: 'Personal Info', icon: User },
@@ -56,7 +56,6 @@ export default function ApplyPage() {
     smsCount: 500,
     appUsageMinutes: 180,
   })
-  const [result, setResult] = useState<PredictionResponse | null>(null)
   const [error, setError] = useState<string>('')
 
   const currentStepIndex = STEPS.findIndex(s => s.id === currentStep)
@@ -101,9 +100,10 @@ export default function ApplyPage() {
     setFlowState('loading')
 
     try {
-      const prediction = await submitApplication(formData)
-      setResult(prediction)
-      setFlowState('result')
+      // Backend kicks off an async lifecycle (submitted -> under_review -> decided).
+      // Hand off to the detail page where the timeline is rendered live.
+      const submitted = await submitApplication(formData)
+      router.push(`/dashboard/applications/${submitted.application_id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process application')
       setFlowState('form')
@@ -161,188 +161,9 @@ export default function ApplyPage() {
     )
   }
 
-  // Result State
-  if (flowState === 'result' && result) {
-    const decision = getDecision(result.credit_score)
-    const emi = decision === 'APPROVED' ? calculateEMI(formData.loanAmount, 18, 12) : 0
-
-    const ResultIcon = decision === 'APPROVED' ? CheckCircle2 : decision === 'MANUAL_REVIEW' ? AlertTriangle : XCircle
-    const colorClasses = {
-      APPROVED: { bg: 'from-field-400 to-field-600', text: 'text-field-700', card: 'border-field-200 bg-field-50' },
-      MANUAL_REVIEW: { bg: 'from-harvest-400 to-harvest-600', text: 'text-harvest-700', card: 'border-harvest-200 bg-harvest-50' },
-      REJECTED: { bg: 'from-clay-400 to-clay-600', text: 'text-clay-700', card: 'border-clay-200 bg-clay-50' },
-    }
-    const colors = colorClasses[decision as keyof typeof colorClasses]
-
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-rural-pattern">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-2xl w-full"
-        >
-          <Card padding="lg">
-            {/* Result Icon */}
-            <div className="text-center mb-8">
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                className={`w-24 h-24 mx-auto mb-6 bg-gradient-to-br ${colors.bg} rounded-full flex items-center justify-center shadow-soft-lg`}
-              >
-                <ResultIcon className="w-12 h-12 text-stone-900" />
-              </motion.div>
-
-              <motion.h1
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className={`text-3xl font-bold ${colors.text} mb-2`}
-              >
-                {decision === 'APPROVED' && 'Loan Approved!'}
-                {decision === 'MANUAL_REVIEW' && 'Under Review'}
-                {decision === 'REJECTED' && 'Not Approved'}
-              </motion.h1>
-
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-                className="text-lg text-stone-600"
-              >
-                {decision === 'APPROVED' && `Congratulations ${formData.fullName}! Your loan has been approved.`}
-                {decision === 'MANUAL_REVIEW' && `Thank you ${formData.fullName}. We'll review and respond within 24 hours.`}
-                {decision === 'REJECTED' && `We're sorry ${formData.fullName}, we cannot approve your loan at this time.`}
-              </motion.p>
-            </div>
-
-            {/* Approval Details */}
-            {decision === 'APPROVED' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-                className="space-y-6"
-              >
-                <div className="grid md:grid-cols-2 gap-4">
-                  <Card className={colors.card}>
-                    <div className="p-4">
-                      <p className="text-sm text-field-600 mb-1">Loan Amount</p>
-                      <p className="text-3xl font-bold text-field-700">₹{formData.loanAmount.toLocaleString('en-IN')}</p>
-                    </div>
-                  </Card>
-                  <Card className={colors.card}>
-                    <div className="p-4">
-                      <p className="text-sm text-field-600 mb-1">Monthly EMI</p>
-                      <p className="text-3xl font-bold text-field-700">₹{emi.toLocaleString('en-IN')}</p>
-                    </div>
-                  </Card>
-                  <Card className="border-harvest-200 bg-harvest-50">
-                    <div className="p-4">
-                      <p className="text-sm text-harvest-600 mb-1">Credit Score</p>
-                      <p className="text-3xl font-bold text-harvest-700">{Math.round(result.credit_score)}/100</p>
-                    </div>
-                  </Card>
-                  <Card className="border-harvest-200 bg-harvest-50">
-                    <div className="p-4">
-                      <p className="text-sm text-harvest-600 mb-1">Processing Fee</p>
-                      <p className="text-3xl font-bold text-harvest-700">₹8</p>
-                    </div>
-                  </Card>
-                </div>
-
-                <Alert variant="success" title="Top Approval Factors">
-                  <ul className="space-y-2 mt-2">
-                    {result.top_features.slice(0, 3).map((feature, idx) => (
-                      <li key={idx} className="flex items-center gap-2 text-sm">
-                        <TrendingUp className="w-4 h-4 text-field-600" />
-                        <span>{feature.name}: <strong>{feature.value.toFixed(2)}</strong></span>
-                      </li>
-                    ))}
-                  </ul>
-                </Alert>
-              </motion.div>
-            )}
-
-            {/* Manual Review Details */}
-            {decision === 'MANUAL_REVIEW' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-              >
-                <Alert variant="warning">
-                  <div className="space-y-2">
-                    <p><strong>Loan Amount:</strong> ₹{formData.loanAmount.toLocaleString('en-IN')}</p>
-                    <p><strong>Credit Score:</strong> {Math.round(result.credit_score)}/100</p>
-                    <p><strong>Reference ID:</strong> KC{Date.now().toString().slice(-8)}</p>
-                  </div>
-                </Alert>
-              </motion.div>
-            )}
-
-            {/* Rejection Details */}
-            {decision === 'REJECTED' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-                className="space-y-4"
-              >
-                <Alert variant="error" title="Reasons">
-                  <ul className="space-y-2 mt-2">
-                    <li className="flex items-start gap-2 text-sm">
-                      <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                      <span>Credit score below threshold ({Math.round(result.credit_score)}/100)</span>
-                    </li>
-                    <li className="flex items-start gap-2 text-sm">
-                      <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                      <span>You can reapply after 30 days</span>
-                    </li>
-                  </ul>
-                </Alert>
-
-                <Alert variant="info" title="How to Improve">
-                  <ul className="space-y-1 mt-2 text-sm">
-                    <li>• Increase monthly UPI transactions</li>
-                    <li>• Maintain regular income patterns</li>
-                    <li>• Reduce expenses relative to income</li>
-                    <li>• Build a stronger digital footprint</li>
-                  </ul>
-                </Alert>
-              </motion.div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="mt-8 flex gap-4">
-              <Button
-                variant="secondary"
-                size="lg"
-                fullWidth
-                onClick={() => router.push('/')}
-                icon={<Home className="w-5 h-5" />}
-              >
-                Back to Home
-              </Button>
-              {decision === 'REJECTED' && (
-                <Button
-                  variant="ghost"
-                  size="lg"
-                  fullWidth
-                  onClick={() => {
-                    setFlowState('form')
-                    setCurrentStep('personal')
-                  }}
-                >
-                  Try Again
-                </Button>
-              )}
-            </div>
-          </Card>
-        </motion.div>
-      </div>
-    )
-  }
+  // Result state lives on /dashboard/applications/[id] — handleSubmit redirects there
+  // once the application is enqueued, and that page renders the live timeline
+  // (submitted -> under_review -> decided) plus the decision + SHAP breakdown.
 
   // Form State (Multi-step wizard)
   return (

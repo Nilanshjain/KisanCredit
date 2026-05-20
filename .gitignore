@@ -26,6 +26,11 @@ env/
 ENV/
 .venv/
 
+# Python venv dirs above use `lib/` and `lib64/` from the broader Python block,
+# but those patterns also catch `frontend/lib/` which is real source. Whitelist:
+!frontend/lib/
+!frontend/lib/**
+
 # IDE
 .vscode/
 .idea/
