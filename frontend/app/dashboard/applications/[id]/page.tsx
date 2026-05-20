@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, Button, Badge, Alert, Skeleton } from '@/components/ui'
 import { ArrowLeft, RefreshCw, Calendar, TrendingUp, TrendingDown, FileText } from 'lucide-react'
+import { getAccessToken } from '@/lib/api'
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
 interface ApplicationDetail {
   application_id: string
@@ -41,16 +44,16 @@ export default function ApplicationDetailPage() {
   const fetchApplicationDetails = async () => {
     try {
       setLoading(true)
-      const token = localStorage.getItem('access_token')
+      const token = getAccessToken()
 
       const response = await fetch(
-        `http://localhost:8000/api/v1/applications/${applicationId}`,
+        `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}`,
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            'Content-Type': 'application/json',
+          },
+        },
       )
 
       if (!response.ok) {
@@ -96,7 +99,7 @@ export default function ApplicationDetailPage() {
           <Button
             onClick={() => router.push('/dashboard')}
             className="mt-4"
-            leftIcon={<ArrowLeft />}
+            icon={<ArrowLeft className="w-4 h-4" />}
           >
             Back to Dashboard
           </Button>
@@ -140,7 +143,7 @@ export default function ApplicationDetailPage() {
             <Button
               onClick={() => router.push('/dashboard')}
               variant="ghost"
-              leftIcon={<ArrowLeft />}
+              icon={<ArrowLeft className="w-4 h-4" />}
             >
               Back
             </Button>
@@ -157,7 +160,7 @@ export default function ApplicationDetailPage() {
           <Button
             onClick={fetchApplicationDetails}
             variant="outline"
-            leftIcon={<RefreshCw />}
+            icon={<RefreshCw className="w-4 h-4" />}
           >
             Refresh
           </Button>

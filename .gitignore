@@ -112,6 +112,7 @@ frontend/.next/
 frontend/out/
 frontend/node_modules/
 frontend/.turbo/
+frontend/tsconfig.tsbuildinfo
 
 # Build artifacts
 *.tgz

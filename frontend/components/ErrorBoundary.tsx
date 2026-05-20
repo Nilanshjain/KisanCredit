@@ -57,14 +57,14 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 <div className="flex gap-2">
                   <Button
                     onClick={() => window.location.reload()}
-                    leftIcon={<RefreshCw />}
+                    icon={<RefreshCw className="w-4 h-4" />}
                     className="flex-1"
                   >
                     Refresh Page
                   </Button>
                   <Button
                     onClick={() => window.location.href = '/'}
-                    leftIcon={<Home />}
+                    icon={<Home className="w-4 h-4" />}
                     variant="outline"
                     className="flex-1"
                   >

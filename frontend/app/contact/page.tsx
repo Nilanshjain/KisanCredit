@@ -8,7 +8,7 @@ export default function ContactPage() {
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50">
       <div className="max-w-4xl mx-auto px-8 py-16">
         <Link href="/">
-          <Button variant="ghost" leftIcon={<ArrowLeft />} className="mb-8">
+          <Button variant="ghost" icon={<ArrowLeft className="w-4 h-4" />} className="mb-8">
             Back to Home
           </Button>
         </Link>

@@ -3,9 +3,9 @@
 import React from 'react'
 import { motion } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, type MotionSafe } from '@/lib/utils'
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends MotionSafe<React.ButtonHTMLAttributes<HTMLButtonElement>> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'success' | 'outline'
   size?: 'sm' | 'md' | 'lg'
   loading?: boolean

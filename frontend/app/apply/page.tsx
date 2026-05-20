@@ -21,7 +21,7 @@ import {
   Home,
   Sparkles
 } from 'lucide-react'
-import { generateFeaturesFromApplication, predictLoan, getDecision, calculateEMI, type LoanApplicationData, type PredictionResponse } from '@/lib/api'
+import { submitApplication, getDecision, calculateEMI, type LoanApplicationData, type PredictionResponse } from '@/lib/api'
 import { Button, Input, Card, Alert, Skeleton } from '@/components/ui'
 
 type FormStep = 'personal' | 'location' | 'loan' | 'financial' | 'digital'
@@ -101,8 +101,7 @@ export default function ApplyPage() {
     setFlowState('loading')
 
     try {
-      const features = generateFeaturesFromApplication(formData)
-      const prediction = await predictLoan(features)
+      const prediction = await submitApplication(formData)
       setResult(prediction)
       setFlowState('result')
     } catch (err) {

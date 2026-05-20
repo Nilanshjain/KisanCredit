@@ -2,18 +2,20 @@
 
 import React from 'react'
 import { motion } from 'framer-motion'
-import { cn } from '@/lib/utils'
+import { cn, type MotionSafe } from '@/lib/utils'
 import { CheckCircle2, AlertCircle, AlertTriangle, Info, X } from 'lucide-react'
 
-export interface AlertProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface AlertProps extends MotionSafe<React.HTMLAttributes<HTMLDivElement>> {
   variant?: 'success' | 'warning' | 'error' | 'info'
   title?: string
+  /** Convenience prop — rendered as the alert body when `children` is omitted. */
+  message?: React.ReactNode
   onClose?: () => void
   icon?: React.ReactNode
 }
 
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
-  ({ className, variant = 'info', title, onClose, icon, children, ...props }, ref) => {
+  ({ className, variant = 'info', title, message, onClose, icon, children, ...props }, ref) => {
     const baseClasses = 'p-4 rounded-xl border flex items-start gap-3'
 
     const variants = {
@@ -43,7 +45,7 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
 
         <div className="flex-1 min-w-0">
           {title && <div className="font-semibold mb-1">{title}</div>}
-          <div className="text-sm">{children}</div>
+          <div className="text-sm">{children ?? message}</div>
         </div>
 
         {onClose && (

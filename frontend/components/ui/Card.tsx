@@ -2,9 +2,9 @@
 
 import React from 'react'
 import { motion } from 'framer-motion'
-import { cn } from '@/lib/utils'
+import { cn, type MotionSafe } from '@/lib/utils'
 
-export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface CardProps extends MotionSafe<React.HTMLAttributes<HTMLDivElement>> {
   variant?: 'default' | 'hover' | 'glass'
   padding?: 'none' | 'sm' | 'md' | 'lg'
 }

@@ -7,7 +7,7 @@ export default function TermsPage() {
     <div className="min-h-screen bg-white">
       <div className="max-w-4xl mx-auto px-8 py-16">
         <Link href="/">
-          <Button variant="ghost" leftIcon={<ArrowLeft />} className="mb-8">
+          <Button variant="ghost" icon={<ArrowLeft className="w-4 h-4" />} className="mb-8">
             Back to Home
           </Button>
         </Link>

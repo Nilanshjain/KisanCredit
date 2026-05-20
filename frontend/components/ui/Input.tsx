@@ -2,10 +2,10 @@
 
 import React from 'react'
 import { motion } from 'framer-motion'
-import { cn } from '@/lib/utils'
+import { cn, type MotionSafe } from '@/lib/utils'
 import { AlertCircle } from 'lucide-react'
 
-export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends MotionSafe<React.InputHTMLAttributes<HTMLInputElement>> {
   label?: string
   error?: string
   helperText?: string

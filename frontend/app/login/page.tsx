@@ -2,106 +2,86 @@
 
 import React, { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Card from '@/components/ui/Card'
 import Alert from '@/components/ui/Alert'
-import { Sprout, Mail, Lock } from 'lucide-react'
+import { Sprout, Phone, KeyRound, ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '@/lib/authStore'
+import { sendOTP, verifyOTP } from '@/lib/authApi'
+
+type Step = 'phone' | 'otp'
 
 export default function LoginPage() {
   const router = useRouter()
+  const search = useSearchParams()
+  const redirectTo = search.get('redirect') || '/dashboard'
+
   const { setTokens, setUser } = useAuthStore()
+
+  const [step, setStep] = useState<Step>('phone')
+  const [phone, setPhone] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [otp, setOtp] = useState('')
+  const [otpExpiresInMin, setOtpExpiresInMin] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const [info, setInfo] = useState('')
 
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-  })
+  const isValidPhone = (p: string) => /^[6-9]\d{9}$/.test(p)
+  const isValidOtp = (o: string) => /^\d{6}$/.test(o)
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    })
-    setError('')
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log('=== LOGIN FORM SUBMITTED ===')
-    console.log('Form data:', formData)
-
     setError('')
-    setSuccess('')
+    setInfo('')
 
-    // Validate form
-    if (!formData.email || !formData.password) {
-      console.log('Validation failed: Missing fields')
-      setError('Please fill in all fields')
+    if (!isValidPhone(phone)) {
+      setError('Enter a valid 10-digit Indian mobile number starting with 6-9')
       return
     }
 
-    console.log('Validation passed, making API request...')
     setLoading(true)
-
     try {
-      const payload = {
-        email: formData.email,
-        password: formData.password,
-      }
-      console.log('API Payload:', payload)
-
-      const response = await fetch('http://localhost:8000/api/v1/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-
-      console.log('API Response status:', response.status)
-      const data = await response.json()
-      console.log('API Response data:', data)
-
-      if (!response.ok) {
-        console.error('API Error:', data)
-        throw new Error(data.message || data.detail || 'Login failed')
-      }
-
-      // Store tokens in auth store
-      console.log('Storing tokens in auth store...')
-      setTokens(data.access_token, data.refresh_token)
-
-      // Set user data if available
-      if (data.user_id) {
-        setUser({
-          user_id: data.user_id,
-          phone_number: data.phone_number,
-          full_name: null,
-          email: formData.email,
-        })
-      }
-
-      setSuccess('Login successful! Redirecting...')
-      console.log('Success! Redirecting to dashboard...')
-
-      // Redirect to dashboard after 1 second
-      setTimeout(() => {
-        router.push('/dashboard')
-      }, 1000)
-    } catch (err: any) {
-      console.error('Login error:', err)
-      const errorMessage = err.message || 'Failed to login'
-      console.error('Setting error message:', errorMessage)
-      setError(errorMessage)
+      const res = await sendOTP(phone)
+      setOtpExpiresInMin(res.expires_in_minutes ?? 5)
+      setStep('otp')
+      setInfo('Demo mode: the OTP is printed in the API server logs (Render dashboard or local terminal).')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send OTP')
     } finally {
       setLoading(false)
-      console.log('=== LOGIN COMPLETE ===')
+    }
+  }
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+
+    if (!isValidOtp(otp)) {
+      setError('OTP must be 6 digits')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const tokens = await verifyOTP(phone, otp, fullName || undefined)
+      setTokens(tokens.access_token, tokens.refresh_token)
+      setUser({
+        user_id: tokens.user_id,
+        phone_number: tokens.phone_number,
+        full_name: fullName || undefined,
+        kyc_verified: false,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      } as any)
+      router.push(redirectTo)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to verify OTP')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -118,82 +98,105 @@ export default function LoginPage() {
             <Sprout className="w-10 h-10 text-field-600" />
             <span className="text-2xl font-bold text-stone-900">KisanCredit</span>
           </Link>
-          <h1 className="text-3xl font-bold text-stone-900 mb-2">Welcome Back</h1>
-          <p className="text-stone-600">Login to access your account</p>
+          <h1 className="text-3xl font-bold text-stone-900 mb-2">
+            {step === 'phone' ? 'Sign in / Get started' : 'Enter the 6-digit OTP'}
+          </h1>
+          <p className="text-stone-600">
+            {step === 'phone'
+              ? 'No password needed — we use mobile OTP, the same way users in tier 2-3 cities prefer.'
+              : `Sent to +91 ${phone}. Expires in ${otpExpiresInMin ?? 5} min.`}
+          </p>
         </div>
 
         <Card>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <Alert variant="error" message={error} />}
-            {success && <Alert variant="success" message={success} />}
+          <Alert
+            variant="info"
+            message="Demo mode: the OTP is logged in the server console instead of being sent over SMS. Check the Render logs (or your local terminal) to grab it."
+          />
 
-            <Input
-              label="Email"
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="Enter your email"
-              icon={<Mail className="w-5 h-5" />}
-              required
-            />
+          <AnimatePresence mode="wait">
+            {step === 'phone' ? (
+              <motion.form
+                key="phone-step"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ duration: 0.2 }}
+                onSubmit={handleSendOtp}
+                className="space-y-4 mt-4"
+              >
+                {error && <Alert variant="error" message={error} />}
 
-            <Input
-              label="Password"
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="Enter your password"
-              icon={<Lock className="w-5 h-5" />}
-              required
-            />
-
-            <div className="flex items-center justify-between">
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 text-field-600 border-stone-300 rounded focus:ring-field-500"
+                <Input
+                  label="Full name (only for new users)"
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Optional for existing users"
+                  autoComplete="name"
                 />
-                <span className="ml-2 text-sm text-stone-600">Remember me</span>
-              </label>
-              <Link href="/forgot-password" className="text-sm text-field-600 hover:text-field-700 font-semibold">
-                Forgot password?
-              </Link>
-            </div>
 
-            <Button type="submit" variant="primary" fullWidth loading={loading}>
-              {loading ? 'Logging in...' : 'Login'}
-            </Button>
-          </form>
+                <Input
+                  label="Mobile number"
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="10-digit number, starts with 6-9"
+                  icon={<Phone className="w-5 h-5" />}
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  required
+                />
 
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-stone-200"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-stone-500">Or continue with</span>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <Link href="/send-otp">
-                <Button variant="outline" fullWidth>
-                  Login with OTP
+                <Button type="submit" variant="primary" fullWidth loading={loading}>
+                  Send OTP
                 </Button>
-              </Link>
-            </div>
-          </div>
+              </motion.form>
+            ) : (
+              <motion.form
+                key="otp-step"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.2 }}
+                onSubmit={handleVerifyOtp}
+                className="space-y-4 mt-4"
+              >
+                {error && <Alert variant="error" message={error} />}
+                {info && <Alert variant="info" message={info} />}
 
-          <div className="mt-6 text-center">
-            <p className="text-sm text-stone-600">
-              Don't have an account?{' '}
-              <Link href="/signup" className="text-field-600 hover:text-field-700 font-semibold">
-                Sign Up
-              </Link>
-            </p>
-          </div>
+                <Input
+                  label="6-digit OTP"
+                  type="text"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="------"
+                  icon={<KeyRound className="w-5 h-5" />}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                />
+
+                <Button type="submit" variant="primary" fullWidth loading={loading}>
+                  Verify &amp; continue
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  fullWidth
+                  onClick={() => {
+                    setStep('phone')
+                    setOtp('')
+                    setError('')
+                  }}
+                  icon={<ArrowLeft className="w-4 h-4" />}
+                >
+                  Use a different number
+                </Button>
+              </motion.form>
+            )}
+          </AnimatePresence>
         </Card>
       </motion.div>
     </div>
