@@ -64,6 +64,15 @@ export default function HomePage() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
+  // Pre-warm Render's free-tier API (spins down after 15 min idle, ~50s cold start).
+  // Firing a no-op /health request when the user lands on the home page means the
+  // API is usually awake by the time they click Apply. Fail silently — this is
+  // best-effort preloading, never blocks UI.
+  useEffect(() => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+    fetch(`${apiBase}/health`, { method: 'GET', cache: 'no-store' }).catch(() => {})
+  }, [])
+
   const features = [
     {
       icon: Zap,

@@ -8,14 +8,28 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: DATABASE_URL_SYNC
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: MODEL_PATH
-        value: models/profitability_model_latest.pkl
       - key: PYTHON_VERSION
         value: 3.10.11
+      - key: MODEL_PATH
+        value: models/profitability_model_latest.pkl
+      # --- secrets (sync: false → set values in the Render dashboard, never in this file) ---
+      - key: SECRET_KEY                  # generate via: python -c "import secrets; print(secrets.token_urlsafe(48))"
+        sync: false
+      - key: DATABASE_URL                # postgresql+asyncpg://… from Neon
+        sync: false
+      - key: DATABASE_URL_SYNC           # postgresql://… (used by Alembic) from Neon
+        sync: false
+      - key: REDIS_URL                   # rediss://default:<token>@<host>:<port> from Upstash
+        sync: false
+      - key: CORS_ORIGINS                # https://<your-vercel-app>.vercel.app (comma-separated allowed)
+        sync: false
+      # --- optional for later phases (leave unset until ready) ---
+      - key: GEMINI_API_KEY              # Phase 6 — google AI studio
+        sync: false
+      - key: MSG91_AUTH_KEY              # Phase 3 — msg91 dashboard
+        sync: false
+      - key: MSG91_SENDER_ID             # Phase 3
+        sync: false
+      - key: MSG91_TEMPLATE_ID           # Phase 3
+        sync: false
     healthCheckPath: /api/v1/health

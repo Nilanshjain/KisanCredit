@@ -135,7 +135,10 @@ export default function ApplyPage() {
           </div>
 
           <h2 className="text-3xl font-bold text-stone-900 mb-4">Analyzing Your Application</h2>
-          <p className="text-lg text-stone-600 mb-8">Our AI is reviewing your details...</p>
+          <p className="text-lg text-stone-600 mb-4">Our AI is reviewing your details...</p>
+          <p className="text-sm text-stone-500 mb-8">
+            First request may take ~50 seconds while the model warms up (free-tier infra).
+          </p>
 
           <div className="space-y-4">
             <Skeleton variant="text" className="w-full h-4" />

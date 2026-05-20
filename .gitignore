@@ -67,11 +67,12 @@ data/synthetic/
 !data/processed/.gitkeep
 !data/synthetic/.gitkeep
 
-# Models (ignore large model files)
+# Models (ignore large model files; track the current production artifact only)
 models/*.pkl
 models/*.joblib
 models/*.h5
 models/*.pt
+!models/profitability_model_latest.pkl
 mlruns/
 
 # Logs
