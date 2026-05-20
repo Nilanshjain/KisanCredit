@@ -18,6 +18,7 @@ import uuid
 
 from .schemas import (
     LoanApplicationRequest,
+    SimpleLoanApplicationRequest,
     PredictionRequest,
     PredictionResponse,
     ExplanationResponse,
@@ -30,7 +31,7 @@ from .schemas import (
     BatchPredictionRequest,
     BatchPredictionResponse,
     DecisionEnum,
-    FeatureContribution
+    FeatureContribution,
 )
 from .middleware import (
     RateLimitMiddleware,
@@ -40,54 +41,74 @@ from .middleware import (
 
 from ..models import ProfitabilityPredictor, ModelExplainer
 from ..features import FeatureEngineeringPipeline
+from ..features.feature_engineering import FeatureExtractionError
 from ..utils.logger import get_logger
 from ..utils.config import settings
 from ..database.repositories import ApplicationRepository, PredictionRepository
-from ..database.connection import get_db
+from ..database.connection import get_db, db_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
+
+API_VERSION = "1.0.0"
+MODEL_VERSION = "v1-synthetic"  # bumped to v2 once Home Credit model lands
 
 # Global instances
 predictor: ProfitabilityPredictor = None
 explainer: ModelExplainer = None
 feature_pipeline: FeatureEngineeringPipeline = None
-performance_monitor: PerformanceMonitoringMiddleware = None
 app_start_time: float = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for application startup and shutdown."""
-    # Startup
     global predictor, explainer, feature_pipeline, app_start_time
 
     logger.info("Starting KisanCredit API...")
     app_start_time = time.time()
 
+    # Feature pipeline — pure compute, no I/O
+    logger.info("Initializing feature engineering pipeline...")
+    feature_pipeline = FeatureEngineeringPipeline()
+
+    # ML model
+    logger.info("Loading ML model...")
+    predictor = ProfitabilityPredictor(settings.model_path)
+    if predictor.model is None:
+        raise RuntimeError(
+            f"Model failed to load from {settings.model_path}. "
+            "Cannot start without a model — fix MODEL_PATH or train one first."
+        )
+
+    # SHAP explainer — wires onto the already-loaded model + its feature names
+    logger.info("Initializing SHAP explainer...")
+    explainer = ModelExplainer(predictor.model, predictor.feature_names)
+
+    # Database — connect once at startup; pool is reused per-request via get_db
+    logger.info("Connecting to database...")
     try:
-        # Load feature engineering pipeline
-        logger.info("Initializing feature engineering pipeline...")
-        feature_pipeline = FeatureEngineeringPipeline()
-
-        # Load ML model and explainer
-        logger.info("Loading ML model...")
-        predictor = ProfitabilityPredictor("models/profitability_model_latest.pkl")
-
-        # TODO: Fix ModelExplainer initialization - needs feature_names parameter
-        # logger.info("Loading model explainer...")
-        # explainer = ModelExplainer("models/profitability_model_latest.pkl")
-
-        logger.info("[OK] KisanCredit API started successfully with ML model loaded")
-
+        await db_manager.connect()
     except Exception as e:
-        logger.error(f"Failed to initialize API: {e}")
-        raise
+        # Don't crash the whole API if DB is briefly unreachable in dev/cold-start;
+        # individual endpoints that need it will surface a clear 503.
+        # Production deploys should monitor /health to catch persistent failures.
+        logger.error(f"Database connection failed at startup (continuing): {e}")
+
+    logger.info(
+        "KisanCredit API started",
+        api_version=API_VERSION,
+        model_version=MODEL_VERSION,
+        n_features=len(predictor.feature_names) if predictor.feature_names else 0,
+    )
 
     yield
 
-    # Shutdown
     logger.info("Shutting down KisanCredit API...")
+    try:
+        await db_manager.disconnect()
+    except Exception as e:
+        logger.warning(f"Database disconnect raised on shutdown: {e}")
 
 
 # Create FastAPI app
@@ -100,16 +121,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Configuration - Fixed: removed credentials=True when using wildcard origins
+# CORS — origins from CORS_ORIGINS env var (whitelist required in production)
+_cors_origins = settings.cors_origins_list()
 app.add_middleware(
     FastAPICORSMiddleware,
-    allow_origins=["*"],  # For production, specify exact origins
-    allow_credentials=False,  # Cannot be True when using wildcard origins
+    allow_origins=_cors_origins,
+    # credentials=True is incompatible with wildcard origins; enable only if a real whitelist is set
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Middleware - Re-enabled after fixing CORS
+app.add_middleware(PerformanceMonitoringMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RateLimitMiddleware, requests_limit=100, window_seconds=900)
 
@@ -169,27 +192,54 @@ async def root():
     }
 
 
-# Health check endpoint - SIMPLIFIED FOR TESTING
-@app.get("/api/v1/health")
+@app.get("/api/v1/health", response_model=HealthResponse)
 async def health_check():
-    """Check API and model health status."""
-    return {"status": "ok", "message": "API is healthy"}
+    """Liveness + readiness check.
+
+    Returns 200 with status='healthy' only if the model is loaded and the DB
+    answers a SELECT 1 within timeout. Returns 200 with status='degraded' if
+    the API is up but a dependency is unreachable, so load balancers can
+    distinguish "API is dead" (no response) from "API has a sick dependency"
+    (status field tells the story).
+    """
+    model_health = predictor.health_check() if predictor else {"is_healthy": False, "model_loaded": False}
+    db_health = await db_manager.health_check()
+
+    overall_healthy = model_health.get("is_healthy") and db_health.get("is_healthy")
+    uptime = time.time() - app_start_time if app_start_time else 0.0
+
+    return HealthResponse(
+        status="healthy" if overall_healthy else "degraded",
+        timestamp=datetime.utcnow(),
+        version=API_VERSION,
+        model_loaded=bool(model_health.get("model_loaded")),
+        model_health={
+            **model_health,
+            "model_version": MODEL_VERSION,
+            "database": db_health,
+        },
+        uptime_seconds=round(uptime, 2),
+    )
 
 
-# Metrics endpoint - Simplified without performance monitoring
 @app.get("/api/v1/metrics", response_model=MetricsResponse)
 async def get_metrics():
-    """Get API performance metrics (simplified)."""
-    # Return placeholder metrics - will be properly implemented with Redis/database later
+    """Real metrics from the PerformanceMonitoringMiddleware snapshot.
+
+    Approval rate is derived from the prediction counter — see Phase 3 for
+    bringing in per-decision counters. For now it reflects only request-level
+    behaviour, not model-decision distribution.
+    """
+    snap = PerformanceMonitoringMiddleware.snapshot()
     return MetricsResponse(
-        total_predictions=0,
-        predictions_last_hour=0,
-        avg_latency_ms=0.0,
-        p95_latency_ms=0.0,
-        p99_latency_ms=0.0,
-        error_rate=0.0,
-        approval_rate=0.68,
-        cache_hit_rate=0.0
+        total_predictions=snap['total_requests'],
+        predictions_last_hour=snap['requests_last_hour'],
+        avg_latency_ms=snap['avg_latency_ms'],
+        p95_latency_ms=snap['p95_latency_ms'],
+        p99_latency_ms=snap['p99_latency_ms'],
+        error_rate=round(snap['error_rate'], 4),
+        approval_rate=0.0,  # populated once decision-level counters land in Phase 3
+        cache_hit_rate=0.0,  # populated once Redis cache metrics are wired
     )
 
 
@@ -306,6 +356,13 @@ async def submit_application(
             message="Application processed successfully"
         )
 
+    except FeatureExtractionError as e:
+        await session.rollback()
+        # 422 — server-side feature extraction rejected the validated input
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
     except Exception as e:
         await session.rollback()
         logger.error(f"Application processing failed: {e}", exc_info=True)
@@ -313,6 +370,102 @@ async def submit_application(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Application processing failed: {str(e)}"
         )
+
+
+def _synthesize_application_payload(simple: SimpleLoanApplicationRequest) -> dict:
+    """Build a LoanApplicationRequest-shaped dict from the simpler frontend form.
+
+    Synthesises a plausible 90-day SMS/contact/location/behavioral payload from
+    monthly_income and monthly_expenses so the existing feature pipeline can
+    run server-side. The v1 model was trained on this shape; in Phase 3 the
+    Home Credit retrain replaces this with a real feature schema.
+    """
+    from datetime import timedelta
+    import uuid
+
+    months = 3
+    txns: list[dict] = []
+    now = datetime.utcnow()
+
+    # One credit per month (salary-like), spaced ~30 days apart
+    for m in range(months):
+        txns.append({
+            "transaction_id": f"TXN_C_{m}_{uuid.uuid4().hex[:6]}",
+            "timestamp": (now - timedelta(days=30 * m)).isoformat(),
+            "amount": float(simple.monthly_income),
+            "transaction_type": "credit",
+            "merchant_category": "salary",
+            "is_credit": True,
+        })
+
+    # Multiple debits per month covering essentials + discretionary
+    essentials_share = 0.6
+    n_debits_per_month = 6
+    for m in range(months):
+        for d in range(n_debits_per_month):
+            day_offset = 30 * m + (d * 4 + 2)
+            amt = simple.monthly_expenses / n_debits_per_month
+            is_essential = d < int(n_debits_per_month * essentials_share)
+            txns.append({
+                "transaction_id": f"TXN_D_{m}_{d}_{uuid.uuid4().hex[:6]}",
+                "timestamp": (now - timedelta(days=day_offset)).isoformat(),
+                "amount": float(amt),
+                "transaction_type": "debit",
+                "merchant_category": "essentials" if is_essential else "discretionary",
+                "is_credit": False,
+            })
+
+    is_urban = simple.pincode[:1] in ("1", "4", "5", "6", "7")  # crude metro/non-metro heuristic
+    return {
+        "user_id": f"USER_{simple.mobile}",
+        "loan_amount": simple.loan_amount,
+        "loan_purpose": simple.loan_purpose,
+        "sms_transactions": txns,
+        "contact_metadata": {
+            "total_contacts": 120,
+            "family_contacts": 15,
+            "business_contacts": 40,
+            "government_contacts": 3,
+            "avg_call_duration": 150.0,
+            "contact_diversity_score": 0.65,
+        },
+        "location_pattern": {
+            "unique_locations": 4,
+            "home_location": {"lat": 28.6139, "lon": 77.2090},
+            "travel_radius_km": 18.0,
+            "area_type": "urban" if is_urban else "rural",
+            "location_stability_score": 0.78,
+        },
+        "behavioral_data": {
+            "app_usage_hours_per_day": 3.5,
+            "night_activity_ratio": 0.12,
+            "gambling_indicators": 0,
+            "financial_app_usage": True,
+            "literacy_score": 0.7,
+        },
+    }
+
+
+@app.post(
+    "/api/v1/applications/simple",
+    response_model=ApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_simple_application(
+    simple: SimpleLoanApplicationRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    """Submit a loan application from the simplified frontend form.
+
+    The form collects basic personal + financial fields; this endpoint
+    synthesises a richer payload and dispatches into the same feature
+    pipeline as `/applications`. Server-side feature engineering ensures
+    the frontend never needs to know about the model's 45-feature schema.
+    """
+    payload = _synthesize_application_payload(simple)
+    # Re-validate through the canonical request schema, then reuse the main path
+    full_request = LoanApplicationRequest(**payload)
+    return await submit_application(full_request, session)
 
 
 # Get application by ID endpoint
@@ -436,12 +589,16 @@ async def predict(request: PredictionRequest):
         )
 
 
-# Explanation endpoint
 @app.get("/api/v1/predictions/{application_id}/explain", response_model=ExplanationResponse)
-async def explain_prediction(application_id: str, features: Dict[str, float]):
-    """Get SHAP-based explanation for a prediction.
+async def explain_prediction(
+    application_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """SHAP-based explanation for a previously-submitted application.
 
-    Requires the same features used for prediction.
+    Fetches the stored extracted_features for the application (set when
+    `/applications` was POSTed) and runs the SHAP TreeExplainer on them.
+    No query-string features — the application_id is the only input.
     """
     if not predictor or not explainer:
         raise HTTPException(
@@ -449,22 +606,37 @@ async def explain_prediction(application_id: str, features: Dict[str, float]):
             detail="Explainer not available. Model or explainer not loaded."
         )
 
+    application = await ApplicationRepository.get_by_id(session, application_id)
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application {application_id} not found"
+        )
+
+    stored_features = application.extracted_features or {}
+    if not stored_features:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Application {application_id} has no stored features to explain"
+        )
+
     try:
         import pandas as pd
 
-        # Convert features to DataFrame
-        features_df = pd.DataFrame([features])
+        # Drop metadata cols, align to model's expected feature order via predictor's validator
+        metadata_cols = {'application_id', 'user_id'}
+        feature_dict = {k: v for k, v in stored_features.items() if k not in metadata_cols}
+        features_df = pd.DataFrame([feature_dict])
+        features_df = predictor._validate_features(features_df)
 
-        # Get explanation
         explanation = explainer.explain_prediction(features_df, top_n=10)
 
-        # Convert to response format
         top_contributors = [
             FeatureContribution(
                 feature=contrib['feature'],
                 value=contrib['value'],
                 contribution=contrib['shap_value'],
-                importance=contrib['abs_shap_value']
+                importance=contrib['abs_shap_value'],
             )
             for contrib in explanation['top_contributions']
         ]
@@ -475,9 +647,11 @@ async def explain_prediction(application_id: str, features: Dict[str, float]):
             decision=DecisionEnum(explanation['decision']),
             base_value=explanation['base_value'],
             top_contributors=top_contributors,
-            explanation_timestamp=datetime.utcnow()
+            explanation_timestamp=datetime.utcnow(),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Explanation failed: {e}", exc_info=True)
         raise HTTPException(

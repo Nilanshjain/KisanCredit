@@ -12,6 +12,7 @@ from pathlib import Path
 import json
 
 from ..utils.logger import get_logger
+from .predictor import decide_band
 
 logger = get_logger(__name__)
 
@@ -117,7 +118,7 @@ class ModelExplainer:
             'base_value': float(self.base_value),
             'top_contributions': contributions[:top_n],
             'all_contributions': contributions,
-            'decision': 'approve' if prediction > 0.6 else 'reject'
+            'decision': decide_band(float(prediction))
         }
 
         logger.debug(

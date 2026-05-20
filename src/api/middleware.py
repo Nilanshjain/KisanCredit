@@ -209,70 +209,61 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 
 class PerformanceMonitoringMiddleware(BaseHTTPMiddleware):
-    """Middleware for performance monitoring and metrics collection."""
+    """Middleware for performance monitoring and metrics collection.
 
-    def __init__(self, app):
-        super().__init__(app)
-        self.metrics = {
-            'total_requests': 0,
-            'total_errors': 0,
-            'latencies': [],
-            'endpoint_counts': defaultdict(int),
-            'status_counts': defaultdict(int),
-            'start_time': time.time()
-        }
-        self.max_latencies = 10000  # Keep last 10K latencies for percentile calculation
+    State is class-level so the /metrics endpoint can read it without holding
+    a reference to the Starlette-instantiated middleware object.
+    """
+
+    _state = {
+        'total_requests': 0,
+        'total_errors': 0,
+        'recent_latencies': [],   # rolling window for percentiles
+        'recent_timestamps': [],  # parallel to recent_latencies, used for "last hour"
+        'endpoint_counts': defaultdict(int),
+        'status_counts': defaultdict(int),
+        'start_time': time.time(),
+    }
+    MAX_RECENT = 10000  # rolling window size
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Monitor request performance."""
         start_time = time.time()
-
         try:
             response = await call_next(request)
-
-            # Record metrics
             latency = (time.time() - start_time) * 1000
-            self._record_metrics(request, response, latency)
-
+            self._record(request, response, latency)
             return response
-
-        except Exception as e:
+        except Exception:
             latency = (time.time() - start_time) * 1000
-            self.metrics['total_errors'] += 1
-            self._record_metrics(request, None, latency, error=True)
+            type(self)._state['total_errors'] += 1
+            self._record(request, None, latency, error=True)
             raise
 
-    def _record_metrics(
+    def _record(
         self,
         request: Request,
         response: Response = None,
         latency: float = 0,
-        error: bool = False
+        error: bool = False,
     ) -> None:
-        """Record request metrics."""
-        self.metrics['total_requests'] += 1
-
-        # Record latency
-        self.metrics['latencies'].append(latency)
-
-        # Keep only last N latencies
-        if len(self.metrics['latencies']) > self.max_latencies:
-            self.metrics['latencies'] = self.metrics['latencies'][-self.max_latencies:]
-
-        # Record endpoint
-        endpoint = f"{request.method} {request.url.path}"
-        self.metrics['endpoint_counts'][endpoint] += 1
-
-        # Record status
-        if response:
-            self.metrics['status_counts'][response.status_code] += 1
+        state = type(self)._state
+        state['total_requests'] += 1
+        state['recent_latencies'].append(latency)
+        state['recent_timestamps'].append(time.time())
+        if len(state['recent_latencies']) > self.MAX_RECENT:
+            state['recent_latencies'] = state['recent_latencies'][-self.MAX_RECENT:]
+            state['recent_timestamps'] = state['recent_timestamps'][-self.MAX_RECENT:]
+        state['endpoint_counts'][f"{request.method} {request.url.path}"] += 1
+        if response is not None:
+            state['status_counts'][response.status_code] += 1
         elif error:
-            self.metrics['status_counts'][500] += 1
+            state['status_counts'][500] += 1
 
-    def get_metrics(self) -> Dict:
-        """Get current metrics summary."""
-        latencies = self.metrics['latencies']
-
+    @classmethod
+    def snapshot(cls) -> Dict:
+        """Read current metrics without holding a middleware reference."""
+        state = cls._state
+        latencies = state['recent_latencies']
         if latencies:
             latencies_sorted = sorted(latencies)
             p50 = latencies_sorted[len(latencies_sorted) // 2]
@@ -280,21 +271,24 @@ class PerformanceMonitoringMiddleware(BaseHTTPMiddleware):
             p99 = latencies_sorted[int(len(latencies_sorted) * 0.99)]
             avg = sum(latencies) / len(latencies)
         else:
-            p50 = p95 = p99 = avg = 0
+            p50 = p95 = p99 = avg = 0.0
 
-        uptime = time.time() - self.metrics['start_time']
+        now = time.time()
+        cutoff = now - 3600  # last hour
+        recent_count = sum(1 for t in state['recent_timestamps'] if t >= cutoff)
 
         return {
-            'total_requests': self.metrics['total_requests'],
-            'total_errors': self.metrics['total_errors'],
-            'error_rate': self.metrics['total_errors'] / max(1, self.metrics['total_requests']),
-            'uptime_seconds': uptime,
+            'total_requests': state['total_requests'],
+            'total_errors': state['total_errors'],
+            'requests_last_hour': recent_count,
+            'error_rate': state['total_errors'] / max(1, state['total_requests']),
+            'uptime_seconds': now - state['start_time'],
             'avg_latency_ms': round(avg, 2),
             'p50_latency_ms': round(p50, 2),
             'p95_latency_ms': round(p95, 2),
             'p99_latency_ms': round(p99, 2),
-            'endpoint_counts': dict(self.metrics['endpoint_counts']),
-            'status_counts': dict(self.metrics['status_counts'])
+            'endpoint_counts': dict(state['endpoint_counts']),
+            'status_counts': dict(state['status_counts']),
         }
 
 

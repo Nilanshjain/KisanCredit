@@ -16,6 +16,19 @@ from ..utils.config import settings
 
 logger = get_logger(__name__)
 
+# Decision thresholds — documented three-band logic
+APPROVE_THRESHOLD = 0.6
+REJECT_THRESHOLD = 0.4
+
+
+def decide_band(score: float) -> str:
+    """Map a profitability score to one of three decisions."""
+    if score > APPROVE_THRESHOLD:
+        return "approve"
+    if score < REJECT_THRESHOLD:
+        return "reject"
+    return "manual_review"
+
 
 class ProfitabilityPredictor:
     """Production predictor for loan profitability scoring.
@@ -145,7 +158,7 @@ class ProfitabilityPredictor:
             return {
                 'score': float(score),
                 'confidence': float(confidence),
-                'decision': 'approve' if score > 0.6 else 'reject',
+                'decision': decide_band(score),
                 'prediction_time_ms': round(prediction_time * 1000, 2)
             }
 
@@ -200,7 +213,7 @@ class ProfitabilityPredictor:
             results = pd.DataFrame({
                 'score': scores,
                 'confidence': confidences,
-                'decision': ['approve' if s > 0.6 else 'reject' for s in scores]
+                'decision': [decide_band(s) for s in scores]
             })
 
             return results
@@ -278,7 +291,7 @@ class ProfitabilityPredictor:
 
         return {
             'score': float(score),
-            'decision': 'approve' if score > 0.6 else 'reject',
+            'decision': decide_band(score),
             'top_contributors': [
                 {
                     'feature': feat,

@@ -1,7 +1,10 @@
 """Configuration management using Pydantic Settings."""
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
+
+# Sentinel: the placeholder secret shipped in defaults. Production refuses to start with this.
+_DEFAULT_SECRET_KEY = "kisan-credit-jwt-secret-key-change-in-production-at-least-32-chars-long"
 
 
 class Settings(BaseSettings):
@@ -18,7 +21,7 @@ class Settings(BaseSettings):
 
     # Security / Authentication
     secret_key: str = Field(
-        default="kisan-credit-jwt-secret-key-change-in-production-at-least-32-chars-long",
+        default=_DEFAULT_SECRET_KEY,
         alias="SECRET_KEY"
     )
     access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
@@ -57,10 +60,44 @@ class Settings(BaseSettings):
     discipline_weight: float = Field(default=0.10, alias="DISCIPLINE_WEIGHT")
     behavioral_weight: float = Field(default=0.10, alias="BEHAVIORAL_WEIGHT")
 
+    # CORS — comma-separated list of allowed origins. In dev, default is "*".
+    # In production, must be set explicitly to a comma-separated whitelist.
+    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+
+    # LLM — optional in dev (falls back to template explanation), required in prod
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+
     class Config:
         """Pydantic config."""
         env_file = ".env"
         case_sensitive = False
+
+    @model_validator(mode="after")
+    def _guard_production_defaults(self):
+        """Refuse to start in production with development placeholders."""
+        if self.environment.lower() == "production":
+            if self.secret_key == _DEFAULT_SECRET_KEY:
+                raise ValueError(
+                    "SECRET_KEY is the default placeholder. Set a real SECRET_KEY "
+                    "(>=32 random chars) in the environment before running in production."
+                )
+            if len(self.secret_key) < 32:
+                raise ValueError(
+                    f"SECRET_KEY is too short ({len(self.secret_key)} chars). "
+                    "Use at least 32 random characters in production."
+                )
+            if self.cors_origins.strip() == "*":
+                raise ValueError(
+                    "CORS_ORIGINS is wildcard. Set a comma-separated whitelist of "
+                    "allowed origins before running in production."
+                )
+        return self
+
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS_ORIGINS env var into a list."""
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 # Global settings instance

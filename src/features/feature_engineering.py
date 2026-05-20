@@ -21,6 +21,21 @@ from ..utils.config import settings
 logger = get_logger(__name__)
 
 
+class FeatureExtractionError(Exception):
+    """Raised when a feature extractor fails on validated input.
+
+    Individual extractors are expected to handle empty/missing inputs gracefully
+    (returning zero features). This error signals an actual extraction bug
+    (TypeError, KeyError on a documented field, etc.) that the API should
+    surface as a 422 rather than silently masking with zeros.
+    """
+
+    def __init__(self, extractor: str, original: Exception):
+        self.extractor = extractor
+        self.original = original
+        super().__init__(f"{extractor} extraction failed: {original.__class__.__name__}: {original}")
+
+
 class FeatureEngineeringPipeline:
     """Complete feature engineering pipeline for loan profitability scoring.
 
@@ -64,65 +79,30 @@ class FeatureEngineeringPipeline:
 
         features = {}
 
-        # Extract income features (9 features)
-        try:
-            income_features = self.income_extractor.extract_features(
-                application_data.get('sms_transactions', [])
-            )
-            features.update(income_features)
-        except Exception as e:
-            logger.error(f"Income feature extraction failed: {e}")
-            features.update(self.income_extractor._get_zero_features())
+        extractors = [
+            ("income", self.income_extractor.extract_features, application_data.get('sms_transactions', [])),
+            ("expense", self.expense_extractor.extract_features, application_data.get('sms_transactions', [])),
+            ("social", self.social_extractor.extract_features, application_data.get('contact_metadata', {})),
+            ("behavioral", self.behavioral_extractor.extract_features, application_data.get('behavioral_data', {})),
+            ("location", self.location_extractor.extract_features, application_data.get('location_pattern', {})),
+            ("discipline", self.discipline_extractor.extract_features, application_data.get('sms_transactions', [])),
+        ]
 
-        # Extract expense features (9 features)
-        try:
-            expense_features = self.expense_extractor.extract_features(
-                application_data.get('sms_transactions', [])
-            )
-            features.update(expense_features)
-        except Exception as e:
-            logger.error(f"Expense feature extraction failed: {e}")
-            features.update(self.expense_extractor._get_zero_features())
-
-        # Extract social network features (8 features)
-        try:
-            social_features = self.social_extractor.extract_features(
-                application_data.get('contact_metadata', {})
-            )
-            features.update(social_features)
-        except Exception as e:
-            logger.error(f"Social feature extraction failed: {e}")
-            features.update({})
-
-        # Extract behavioral features (6 features)
-        try:
-            behavioral_features = self.behavioral_extractor.extract_features(
-                application_data.get('behavioral_data', {})
-            )
-            features.update(behavioral_features)
-        except Exception as e:
-            logger.error(f"Behavioral feature extraction failed: {e}")
-            features.update({})
-
-        # Extract location features (7 features)
-        try:
-            location_features = self.location_extractor.extract_features(
-                application_data.get('location_pattern', {})
-            )
-            features.update(location_features)
-        except Exception as e:
-            logger.error(f"Location feature extraction failed: {e}")
-            features.update({})
-
-        # Extract financial discipline features (6 features)
-        try:
-            discipline_features = self.discipline_extractor.extract_features(
-                application_data.get('sms_transactions', [])
-            )
-            features.update(discipline_features)
-        except Exception as e:
-            logger.error(f"Discipline feature extraction failed: {e}")
-            features.update(self.discipline_extractor._get_zero_features())
+        for name, extract, payload in extractors:
+            try:
+                features.update(extract(payload))
+            except Exception as e:
+                # Per root-cause discipline: don't paper over with zeros.
+                # Individual extractors must handle empty/missing inputs internally;
+                # anything that bubbles out is a real bug — surface it.
+                logger.error(
+                    f"{name} feature extraction failed",
+                    application_id=application_data.get('application_id'),
+                    error_type=e.__class__.__name__,
+                    error=str(e),
+                    exc_info=True,
+                )
+                raise FeatureExtractionError(name, e) from e
 
         # Add metadata
         features['application_id'] = application_data.get('application_id', 'unknown')
