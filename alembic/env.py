@@ -1,7 +1,7 @@
 from logging.config import fileConfig
-import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -11,18 +11,41 @@ from alembic import context
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import database models
+# Import database models + pydantic-loaded settings (settings auto-loads .env)
 from src.database.models import Base
 from src.utils.config import settings
+
+
+def _to_psycopg2_url(url: str) -> str:
+    """Normalize any SQLAlchemy DB URL into a psycopg2-compatible form.
+
+    Alembic uses psycopg2 (sync), so the URL must:
+      1. Use the bare `postgresql://` driver (not `postgresql+asyncpg://`)
+      2. Use `sslmode=` for SSL (not asyncpg's `ssl=`) — Neon requires SSL
+    """
+    url = url.replace('postgresql+asyncpg://', 'postgresql://', 1)
+
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+
+    # asyncpg uses `ssl=require|true|false`; psycopg2 wants `sslmode=require|disable|...`
+    if 'ssl' in query and 'sslmode' not in query:
+        ssl_val = query.pop('ssl').lower()
+        query['sslmode'] = 'require' if ssl_val in ('true', 'require', '1', 'yes') else 'disable'
+
+    # Force SSL on Neon (host contains 'neon.tech') if not specified — it's required there
+    if 'neon.tech' in (parts.hostname or '') and 'sslmode' not in query:
+        query['sslmode'] = 'require'
+
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+# Prefer the explicit sync URL from .env; otherwise derive from the async one.
+database_url = _to_psycopg2_url(settings.database_url_sync or settings.database_url)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-
-# Set database URL from environment variables
-database_url = os.getenv('DATABASE_URL_SYNC') or settings.database_url.replace(
-    'postgresql+asyncpg://', 'postgresql://'
-)
 config.set_main_option('sqlalchemy.url', database_url)
 
 # Interpret the config file for Python logging.
