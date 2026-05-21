@@ -1,92 +1,133 @@
-# KisanCredit — Alternative Credit Scoring for Thin-File Borrowers
+# KisanCredit — Credit Scoring for Thin-File Borrowers
 
-> An end-to-end ML credit-scoring system: trained on **307,511 real loan applicants**,
-> served through a FastAPI backend with a live application lifecycle, a lender/operator
-> dashboard with input-drift monitoring, and Gemini-powered plain-language explanations.
+An end-to-end machine-learning credit system: a LightGBM default-risk model
+trained on 307,511 real loan applicants, served through a FastAPI backend with
+a live application lifecycle, a lender-side operations dashboard with input-drift
+monitoring, and Gemini-generated plain-language decision explanations.
 
-**Status:** backend + ML + frontend complete · deployment in progress
-(intended: Render API + Vercel frontend + Neon Postgres)
+**Status:** backend, ML, and frontend complete; deployment in progress
+(Render API + Vercel frontend + Neon Postgres).
 
 ---
 
 ## The problem
 
-Hundreds of millions of people — in India and across emerging markets — are
-**credit-invisible**: no credit cards, no formal loan history, so traditional
-underwriting rejects them by default. Yet they have real, scoreable financial
-signal (income stability, payment discipline, existing obligations).
+A large share of people — in India and across emerging markets — are
+*credit-invisible*. No credit card, no prior formal loan, so a traditional
+underwriter has nothing to score and rejects them by default. The catch is
+circular: you need a credit history to get credit, and credit to build a history.
 
-KisanCredit is a credit-scoring system for exactly that population: it produces
-a default-risk score, an explainable decision, and an actionable "how to improve"
-suggestion — for applicants a FICO-style model can't even evaluate.
+These applicants are not all high-risk. Many have steady income, manageable
+obligations, and stable employment — signal a model can use. KisanCredit scores
+exactly that population and returns three things: a default-risk decision, the
+factors behind it, and, when the answer isn't yes, a concrete suggestion for what
+would change it.
 
 ---
 
-## The ML model (v2)
+## The model
 
-The production model is trained on the **[Home Credit Default Risk](https://www.kaggle.com/c/home-credit-default-risk)**
-dataset — 307,511 anonymised applicants from a lender whose explicit mandate is
-serving clients *with insufficient credit history* across emerging markets. It's
-the closest authentic, large, publicly-benchmarked approximation of the target
-population (see [Honest limitations](#honest-limitations) for why no public
-India-specific dataset exists).
+The production model is trained on the
+[Home Credit Default Risk](https://www.kaggle.com/c/home-credit-default-risk)
+dataset — 307,511 anonymised applicants from a lender whose stated mandate is
+serving customers with little or no credit-bureau history. No comparable
+individual-level Indian dataset is publicly available (see
+[Limitations](#limitations)), and Home Credit is the closest authentic,
+large, publicly benchmarked stand-in for the target population.
 
-| Metric | Value |
+### One decision worth explaining
+
+Home Credit's most predictive features are its three `EXT_SOURCE` columns —
+normalised scores from external credit bureaus. Train with them and the AUC is
+roughly eight points higher.
+
+This model is trained **without them**, on purpose. The entire premise is
+scoring people who have no bureau record. A model that leans on a bureau score
+to make its call doesn't work for the person it is meant to serve — it just
+rebuilds the wall it was supposed to get around. So the feature set is
+restricted to 39 features an applicant can actually supply at application time:
+income, requested loan, employment length, age, household size, education,
+housing, asset ownership, and ratios derived from those.
+
+That decision costs accuracy. It is the honest tradeoff for a model that
+matches the product.
+
+| | |
 |---|---|
-| Model | LightGBM, 149 engineered features |
-| Validation | Stratified 5-fold CV |
-| **ROC-AUC** | **0.7619 ± 0.0044** |
-| Logistic-regression baseline | 0.7476 |
-| Brier score (calibration) | 0.0676 |
-| Public Kaggle SOTA (7,000 teams) | ~0.805 |
-| Class balance (default rate) | 8.07% |
+| Algorithm | LightGBM, 39 application-time features |
+| Validation | Stratified 5-fold cross-validation |
+| Applicants | 307,511 |
+| **ROC-AUC** | **0.6803 ± 0.0047** |
+| Logistic-regression baseline | 0.6578 |
+| Brier score (calibration) | 0.0715 |
+| Default rate (class balance) | 8.07% |
 
-Reproduce it: `python scripts/train_home_credit.py` (dataset via `kagglehub`).
-Smoke-test on real rows: `python scripts/demo_v2_prediction.py`.
+For reference, the public Kaggle leaderboard tops out near 0.805 — but that
+uses the full multi-table dataset (bureau records, prior applications, payment
+histories), not the application-only feature set used here.
 
-![ROC, Precision-Recall, and calibration curves](notebooks/home_credit_eval.png)
+Sanity check on real applicants: the model predicts an average 24% default
+probability for people who actually defaulted versus 5% for people who repaid —
+a clean separation in the right direction (`python scripts/demo_v2_prediction.py`).
+
+![ROC, precision-recall, and calibration curves](notebooks/home_credit_eval.png)
 
 ![SHAP feature-importance summary](notebooks/home_credit_shap.png)
 
-**Why these numbers are honest:** AUC 0.76 against a 0.805 public benchmark is a
-real, defensible result. The earlier prototype reported "R²=1.0 on synthetic
-data" — a meaningless number from a toy generator. v2 replaces it with a model
-trained and cross-validated on real applicants, calibrated, and fairness-checked.
+Reproduce it with `python scripts/train_home_credit.py` (the dataset downloads
+via `kagglehub`).
+
+### Decision thresholds
+
+A calibrated default model on an 8%-default population outputs a narrow band of
+probabilities, so a fixed cutoff like "approve above 0.6" would approve everyone.
+The three decision bands — approve, manual review, reject — are instead derived
+from the model's own score distribution on the training set (the 45th and 18th
+percentiles) and stored inside the model artifact. That makes the policy
+explicit and auditable: approve the lowest-risk ~45%, send the riskiest ~18% to
+reject, review the rest.
+
+### Why LightGBM, and what it was measured against
+
+Gradient-boosted trees are the standard choice for tabular credit data, but
+"standard" is not a reason on its own. `scripts/benchmark_tabnet.py` trains a
+TabNet classifier — an attention-based deep-learning architecture for tabular
+data, built on PyTorch — on the identical features and identical CV folds, so
+the comparison is fair. LightGBM was kept as the production model; the benchmark
+script records the measured gap.
 
 ---
 
 ## What's in the system
 
+It is a two-sided product, and that is deliberate. A model behind a form is a
+demo; a model with an operations layer around it is a system. The second side is
+where most of the interesting engineering lives.
+
 ### Borrower side
-- **Email-OTP passwordless auth** — no passwords, matching how real fintechs onboard thin-file users
-- **Multi-step application form** → server-side feature engineering → LightGBM scoring
-- **Realistic application lifecycle** — `submitted → under_review → decided`, each transition recorded as an immutable audit event, surfaced as a live polling timeline
-- **SHAP explanations** — per-decision feature attributions
-- **Gemini-narrated explanations** (English / हिन्दी) — plain-language "why" + one actionable suggestion
-- **Counter-factual "how to improve"** — greedy search over actionable features finds the minimum change set that would flip the decision toward approval
+
+- Passwordless email-OTP sign-in.
+- A multi-step application form. The fields map server-side onto the model's
+  feature schema — the frontend never does feature engineering itself.
+- A realistic application lifecycle: `submitted → under_review → decided`. Each
+  transition is written as an immutable audit event and shown as a live timeline
+  the page polls until the decision lands.
+- Per-decision SHAP attributions — which features moved the score, and which way.
+- A plain-language explanation generated by Gemini, in English or Hindi.
+- A counter-factual "how to improve" card: a greedy search over the fields an
+  applicant can realistically change, finding the smallest adjustment that would
+  move the decision toward approval.
 
 ### Lender / operator side (`/admin`)
-- **Live metrics dashboard** — predictions/hour, approval rate, p95 latency, score-distribution histogram
-- **Application queue** — status-filterable, paginated, with per-application drill-down
-- **Manual override** — admin can override a model decision; recorded with actor + reason in the audit trail
-- **Input-drift monitoring** — Population Stability Index (PSI) per feature vs the training-set baseline, with stable / moderate / significant bands
 
-This two-sided design — borrower *and* operator — is what makes it a production ML
-*system*, not just a model behind a form.
-
-### Trying the live demo
-
-The deployment runs with `DEMO_MODE=true`, so the OTP is shown on the login
-screen — no inbox needed:
-
-- **Borrower view** — sign in with *any* email, submit an application, watch the
-  lifecycle and decision.
-- **Operator view** — sign in with the demo operator email (in the deployed
-  app's login hint / pinned repo description) to reach `/admin`. That account is
-  auto-seeded with the admin role on every startup.
-
-A real production deploy sets `DEMO_MODE=false`; the OTP then only goes by email
-and admin promotion is a deliberate, separate step (`scripts/promote_admin.py`).
+- A live metrics dashboard: throughput, approval rate, p95 latency, and a
+  score-distribution histogram.
+- The application queue — filterable by status, paginated, each row drilling
+  into the full applicant record, features, SHAP breakdown, and timeline.
+- Manual override: an operator can overturn a model decision, and the action is
+  recorded with the actor and a reason in the audit trail.
+- Input-drift monitoring: Population Stability Index per feature against the
+  training-set baseline, banded into stable / moderate / significant.
 
 ---
 
@@ -94,9 +135,9 @@ and admin promotion is a deliberate, separate step (`scripts/promote_admin.py`).
 
 ```mermaid
 flowchart TD
-    subgraph Client["Frontend — Next.js 16 / React 19 / Tailwind / Vercel"]
+    subgraph Client["Frontend — Next.js 16 / React 19 / Vercel"]
         B[Borrower: apply, track, view explanation]
-        A[Operator: /admin metrics, queue, override, drift]
+        A[Operator: metrics, queue, override, drift]
     end
 
     subgraph API["Backend — FastAPI / async SQLAlchemy / Render"]
@@ -122,54 +163,56 @@ flowchart TD
     AUTH --> RS
 ```
 
-The application lifecycle runs as a FastAPI `BackgroundTask`: the submit request
-returns immediately with `status=submitted`, then a worker walks it through
-`under_review` and `decided` (running inference at the decision step). The
+The lifecycle runs as a FastAPI background task. The submit request returns
+immediately with `status=submitted`; a worker then advances the application
+through `under_review` and `decided`, running inference at the final step. The
 frontend polls a timeline endpoint until the status is terminal.
 
 ---
 
 ## Tech stack
 
-| Layer | Choice | Notes |
-|---|---|---|
-| ML model | **LightGBM** | Correct tool for tabular credit risk; beats DL at this scale |
-| Baseline / metrics | scikit-learn | Logistic-regression sanity baseline, stratified CV |
-| Explainability | **SHAP** TreeExplainer | Per-decision attributions |
-| LLM layer | **Gemini 1.5 Flash** | NL explanations + counter-factual narration, EN/HI |
-| Drift | Population Stability Index | Pure-numpy, ~30 lines, industry-standard |
-| Backend | **FastAPI** + async SQLAlchemy 2.0 | asyncpg, Alembic migrations |
-| Auth | JWT (access + refresh) + email OTP | Passwordless, via Resend |
-| Database | PostgreSQL (**Neon**) | Serverless, persistent free tier |
-| Frontend | **Next.js 16** (App Router), React 19, TS 5.9 | Tailwind 4, Zustand, Recharts, Framer Motion |
-| Deploy | Render (API) + Vercel (frontend) | both free tier |
+| Layer | Choice |
+|---|---|
+| Model | LightGBM, with a TabNet (PyTorch) baseline for comparison |
+| Cross-validation, metrics, baseline | scikit-learn |
+| Explainability | SHAP TreeExplainer |
+| Natural-language explanations | Gemini 1.5 Flash (English / Hindi) |
+| Drift | Population Stability Index (pure NumPy) |
+| Backend | FastAPI, async SQLAlchemy 2.0, asyncpg, Alembic |
+| Auth | JWT access + refresh tokens, email OTP via Resend |
+| Database | PostgreSQL (Neon) |
+| Frontend | Next.js 16 App Router, React 19, TypeScript, Tailwind, Recharts |
+| Hosting | Render (API), Vercel (frontend) |
 
 ---
 
-## Run it locally
+## Running it locally
 
 ```bash
 # Backend
 pip install -r requirements.txt
-cp .env.example .env          # fill DATABASE_URL (Neon); other keys optional
+cp .env.example .env          # set DATABASE_URL (Neon); the other keys are optional
 alembic upgrade head
-python -m uvicorn src.api.main:app --reload      # http://localhost:8000  · /docs for Swagger
+python -m uvicorn src.api.main:app --reload    # http://localhost:8000 — /docs for Swagger
 
 # Frontend
 cd frontend && npm install
-npm run dev                                       # http://localhost:3000
+npm run dev                                     # http://localhost:3000
 ```
 
-Optional integrations degrade gracefully when their keys are unset:
-- **No `GEMINI_API_KEY`** → explanations fall back to a deterministic template
-- **No `RESEND_API_KEY`** → the OTP is printed to the API logs instead of emailed
-- **No `REDIS_URL`** → in-process caches are used
+The optional integrations degrade gracefully when their keys are missing:
 
-### Retrain the model
+- no `GEMINI_API_KEY` — explanations fall back to a deterministic template
+- no `RESEND_API_KEY` — the OTP is written to the API log instead of emailed
+- no `REDIS_URL` — in-process caches are used instead
+
+Retraining the model needs the dev dependencies:
 
 ```bash
 pip install -r requirements-dev.txt
-python scripts/train_home_credit.py    # downloads Home Credit via kagglehub, trains, saves models/home_credit_v2.pkl
+python scripts/train_home_credit.py     # downloads Home Credit, trains, writes models/home_credit_v2.pkl
+python scripts/benchmark_tabnet.py      # the TabNet vs LightGBM comparison
 ```
 
 ---
@@ -181,55 +224,66 @@ src/
   api/         main.py · auth.py · users.py · admin.py · schemas.py · middleware.py
   auth/        jwt_handler · otp_manager (email OTP) · dependencies (require_admin)
   models/      predictor · explainer (SHAP) · drift_detector (PSI) · counterfactual
+  features/    home_credit_features — form → model feature mapping
   llm/         gemini_explainer — NL explanations + counter-factual narration
-  features/    feature_engineering + 6 category extractors
   database/    models (7 tables) · repositories · connection
   cache/       recent_features (drift buffer) · redis_cache
 frontend/
-  app/         landing · login (email OTP) · apply · dashboard · admin/*
+  app/         landing · login · apply · dashboard · admin/*
   components/  ui kit · AdminGuard · ErrorBoundary · Navbar
   lib/         api.ts · authApi.ts · authStore.ts
-scripts/       train_home_credit.py · demo_v2_prediction.py · promote_admin.py
+scripts/       train_home_credit.py · benchmark_tabnet.py · demo_v2_prediction.py · promote_admin.py
 notebooks/     home_credit_eval.png · home_credit_shap.png
-alembic/       migrations (6-table schema · password_hash · status_events · user_role)
+alembic/       schema migrations
 tests/         e2e · api · model tests
 ```
 
 ---
 
-## Honest limitations
+## Limitations
 
-- **No public India-specific dataset.** Individual-level Indian credit data isn't
-  publicly available — DPDPA 2023, RBI guidelines, and CIBIL's commercial monopoly
-  prevent it. Home Credit is the closest authentic public proxy (emerging-market,
-  thin-file). Production deployment in India would require CIBIL access or a
-  partner-NBFC data agreement.
-- **Fairness.** The model shows differential predicted-default rates by gender
-  (M 9.9% / F 7.0%) and age (under-30 11.5% / 60+ 4.8%). These reflect genuine
-  base-rate differences in the dataset, not a model bug — but a production system
-  would need explicit fairness constraints and adverse-action review.
-- **The applicant form** collects a simplified field set and synthesises a richer
-  payload server-side; the v2 model's full Home Credit feature schema isn't
-  exposed end-to-end through the demo form yet.
-- **Free-tier infra.** Render spins down after 15 min idle (~50s cold start);
-  the frontend pre-warms the API on page load to mask it.
+Worth being direct about what this is and isn't.
+
+- **No Indian dataset.** Individual-level Indian credit data isn't publicly
+  available — the DPDP Act 2023, RBI rules, and CIBIL's commercial position all
+  keep it closed. Home Credit is a genuine emerging-market thin-file proxy, but a
+  real Indian deployment would need CIBIL access or a partner-NBFC data agreement.
+- **Modest accuracy, by design.** ROC-AUC 0.68 is well below the ~0.80 reachable
+  with bureau features. That gap is the price of not using a bureau score — see
+  [the design decision above](#one-decision-worth-explaining). It is a real, if
+  imperfect, ranking of risk, not a finished underwriting model.
+- **Fairness.** Predicted default rates differ across groups in the training
+  data — 10.0% for men versus 7.0% for women, and 11.5% for under-30s versus 5.0%
+  for over-60s. These track real base-rate differences in the dataset rather than
+  a modelling bug, but a production system would need explicit fairness
+  constraints and an adverse-action review process before it scored anyone.
+- **Free-tier hosting.** Render sleeps the API after 15 minutes idle and takes
+  roughly 50 seconds to wake; the frontend shows a warming-up state to cover it.
 
 ---
 
-## Resume bullets
+## Résumé summary
 
 > **KisanCredit — ML credit-scoring system** · [code](https://github.com/Nilanshjain/KisanCredit)
 >
-> - Trained a LightGBM credit-default model on **307K real Home Credit applicants** (149 engineered features); **ROC-AUC 0.76** on stratified 5-fold CV vs. 0.805 public SOTA, calibrated (Brier 0.068), with SHAP attributions and a fairness audit across gender and age cohorts
-> - Built the full production stack — **FastAPI + async SQLAlchemy + LightGBM serving**, an application-lifecycle state machine with audit trail, JWT + email-OTP auth — and a **lender dashboard with PSI-based input-drift monitoring** and audit-trailed manual overrides
-> - Integrated **Gemini** for plain-language decision explanations (English/Hindi) and **greedy-search counter-factuals** ("how to improve"), with graceful template fallback when the LLM is unavailable
-
-Three angles: **ML rigor · production engineering · operator-grade observability.**
+> - Trained a LightGBM default-risk model on 307K real loan applicants
+>   (ROC-AUC 0.68, 5-fold CV), deliberately excluding credit-bureau features so
+>   the model works for thin-file applicants who have no bureau record, and
+>   benchmarked it against a TabNet (PyTorch) deep-learning baseline on identical
+>   folds.
+> - Built the serving stack end to end: FastAPI and async SQLAlchemy, an
+>   application-lifecycle state machine with a full audit trail, JWT and
+>   email-OTP auth, SHAP explanations, and decision thresholds derived from the
+>   model's own score distribution.
+> - Added a lender-operations dashboard with Population Stability Index drift
+>   monitoring against the training baseline and audit-trailed manual overrides,
+>   plus Gemini-generated explanations and counter-factual guidance in English
+>   and Hindi.
 
 ---
 
 ## Author
 
-**Nilansh Jain** — [github.com/Nilanshjain](https://github.com/Nilanshjain)
+Nilansh Jain — [github.com/Nilanshjain](https://github.com/Nilanshjain)
 
 MIT License.
