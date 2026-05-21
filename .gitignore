@@ -67,22 +67,24 @@ htmlcov/
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
-# Data — ignore contents of raw/processed/synthetic, keep folder structure via .gitkeep.
+# Data — ignore contents of raw/processed/synthetic/cache, keep folder structure via .gitkeep.
 # Use `dir/**` rather than `dir/` so the !.gitkeep negations actually take effect
 # (a bare-dir ignore short-circuits negation of files inside it).
 data/raw/**
 data/processed/**
 data/synthetic/**
+data/cache/**
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/synthetic/.gitkeep
 
-# Models (ignore large model files; track the current production artifact only)
+# Models (ignore large model files; track the production artifacts only)
 models/*.pkl
 models/*.joblib
 models/*.h5
 models/*.pt
 !models/profitability_model_latest.pkl
+!models/home_credit_v2.pkl
 mlruns/
 
 # Logs
