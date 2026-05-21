@@ -12,10 +12,8 @@ ruff==0.1.6
 # Load Testing
 locust==2.17.0
 
-# Notebooks
+# Notebooks (matplotlib + seaborn moved to requirements.txt — needed at runtime)
 jupyter==1.0.0
-matplotlib==3.8.2
-seaborn==0.13.0
 
 # Phase 5 — Home Credit retrain (offline / notebook-only; not shipped to Render)
 kaggle==1.6.17                          # dataset download
