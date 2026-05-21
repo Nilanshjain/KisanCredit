@@ -34,6 +34,8 @@ export interface UserProfile {
   monthly_income?: number;
   kyc_verified: boolean;
   is_active: boolean;
+  /** 'user' (applicant) or 'admin' (lender/operator). Gates /admin/* routes. */
+  role?: 'user' | 'admin';
   created_at: string;
 }
 

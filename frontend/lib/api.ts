@@ -119,6 +119,123 @@ export async function submitApplication(data: LoanApplicationData): Promise<Appl
   return response.json();
 }
 
+// ─────────────────────── Admin (lender/operator) ───────────────────────
+
+export interface AdminMetricsOverview {
+  window_hours: number;
+  total_predictions: number;
+  avg_score: number;
+  avg_confidence: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  decisions: Array<{ decision: string; count: number }>;
+  score_histogram: Array<{ range_low: number; range_high: number; count: number }>;
+  pending_review_count: number;
+  recent_buffer_size: number;
+  drift_baseline_available: boolean;
+}
+
+export interface AdminApplicationSummary {
+  application_id: string;
+  user_id: string;
+  user_phone: string | null;
+  loan_amount: number;
+  loan_purpose: string;
+  status: string;
+  submitted_at: string;
+  decision: string | null;
+  score: number | null;
+}
+
+export interface AdminApplicationsList {
+  total: number;
+  limit: number;
+  offset: number;
+  applications: AdminApplicationSummary[];
+}
+
+export interface AdminApplicationDetail {
+  application_id: string;
+  user_id: string;
+  user_phone: string | null;
+  user_full_name: string | null;
+  loan_amount: number;
+  loan_purpose: string;
+  status: string;
+  submitted_at: string;
+  processed_at: string | null;
+  processing_time_ms: number | null;
+  extracted_features: Record<string, number> | null;
+  latest_prediction: {
+    profitability_score: number;
+    confidence: number;
+    decision: string;
+    model_version: string | null;
+    prediction_latency_ms: number | null;
+    prediction_timestamp: string;
+  } | null;
+  timeline: ApplicationTimelineEvent[];
+}
+
+export interface AdminDriftFeature {
+  feature: string;
+  psi: number | null;
+  severity: 'stable' | 'moderate' | 'significant' | 'unknown' | 'no_data';
+  n_current: number;
+  baseline_available: boolean;
+}
+
+export interface AdminDriftResponse {
+  n_recent_inputs: number;
+  baseline_available: boolean;
+  summary: Record<string, number>;
+  features: AdminDriftFeature[];
+}
+
+async function adminGet<T>(path: string): Promise<T> {
+  const r = await fetch(`${API_BASE_URL}/admin${path}`, {
+    headers: { ...authHeader() }, cache: 'no-store',
+  });
+  if (!r.ok) {
+    if (r.status === 403) throw new Error('Admin role required.');
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail || `request failed (${r.status})`);
+  }
+  return r.json();
+}
+
+export const fetchAdminMetrics = () => adminGet<AdminMetricsOverview>('/metrics/overview');
+export const fetchAdminApplications = (statusFilter?: string, limit = 50, offset = 0) => {
+  const params = new URLSearchParams();
+  if (statusFilter) params.set('status_filter', statusFilter);
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  return adminGet<AdminApplicationsList>(`/applications?${params}`);
+};
+export const fetchAdminApplicationDetail = (applicationId: string) =>
+  adminGet<AdminApplicationDetail>(`/applications/${encodeURIComponent(applicationId)}`);
+export const fetchAdminDrift = () => adminGet<AdminDriftResponse>('/drift');
+
+export async function adminOverrideDecision(
+  applicationId: string, decision: 'approve' | 'reject' | 'manual_review', reason: string,
+): Promise<{ application_id: string; new_status: string; overridden_decision: string; occurred_at: string }> {
+  const r = await fetch(
+    `${API_BASE_URL}/admin/applications/${encodeURIComponent(applicationId)}/override`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ decision, reason }),
+    },
+  );
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail || `Override failed (${r.status})`);
+  }
+  return r.json();
+}
+
+// ────────────────────────────────────────────────────────────────────────
+
 export async function fetchTimeline(applicationId: string): Promise<ApplicationTimelineResponse> {
   const response = await fetch(
     `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/timeline`,
