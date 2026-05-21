@@ -16,6 +16,9 @@ __all__ = [
     "PredictionRequest",
     "PredictionResponse",
     "ExplanationResponse",
+    "NaturalLanguageExplanationModel",
+    "CounterfactualChange",
+    "CounterfactualResponse",
     "ApplicationResponse",
     "ApplicationSubmittedResponse",
     "ApplicationTimelineEvent",
@@ -217,6 +220,15 @@ class PredictionResponse(BaseModel):
         }
 
 
+class NaturalLanguageExplanationModel(BaseModel):
+    """LLM-narrated explanation accompanying the SHAP technical breakdown."""
+    text: str
+    suggestion: str = ""
+    language: str = "en"
+    source: str = "template"  # 'gemini' | 'template'
+    cached: bool = False
+
+
 class ExplanationResponse(BaseModel):
     """Response schema for prediction explanation."""
     application_id: str
@@ -225,6 +237,29 @@ class ExplanationResponse(BaseModel):
     base_value: float
     top_contributors: List[FeatureContribution]
     explanation_timestamp: datetime
+    # Phase 6: Gemini-narrated plain-language explanation (always populated;
+    # falls back to a deterministic template when LLM is unavailable).
+    natural_language: Optional[NaturalLanguageExplanationModel] = None
+
+
+class CounterfactualChange(BaseModel):
+    feature: str
+    display_label: str
+    display_unit: str = ""
+    current: float
+    suggested: float
+    delta_score: float
+    new_score: float
+
+
+class CounterfactualResponse(BaseModel):
+    """How-to-improve suggestion derived from a greedy 1-D feature search."""
+    application_id: str
+    starting_score: float
+    final_score: float
+    reachable: bool                                  # could we cross the approve threshold?
+    changes: List[CounterfactualChange]
+    natural_language: Optional[NaturalLanguageExplanationModel] = None
 
     class Config:
         schema_extra = {

@@ -270,6 +270,14 @@ export interface ExplanationContributor {
   importance: number;
 }
 
+export interface NaturalLanguageExplanation {
+  text: string;
+  suggestion: string;
+  language: 'en' | 'hi';
+  source: 'gemini' | 'template';
+  cached: boolean;
+}
+
 export interface ApplicationExplanation {
   application_id: string;
   profitability_score: number;
@@ -277,17 +285,48 @@ export interface ApplicationExplanation {
   base_value: number;
   top_contributors: ExplanationContributor[];
   explanation_timestamp: string;
+  natural_language: NaturalLanguageExplanation | null;
 }
 
-export async function fetchExplanation(applicationId: string): Promise<ApplicationExplanation> {
-  const response = await fetch(
-    `${API_BASE_URL}/predictions/${encodeURIComponent(applicationId)}/explain`,
-    { headers: { ...authHeader() } },
-  );
+export interface CounterfactualChange {
+  feature: string;
+  display_label: string;
+  display_unit: string;
+  current: number;
+  suggested: number;
+  delta_score: number;
+  new_score: number;
+}
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Explanation failed: ${response.status}`);
+export interface CounterfactualResult {
+  application_id: string;
+  starting_score: number;
+  final_score: number;
+  reachable: boolean;
+  changes: CounterfactualChange[];
+  natural_language: NaturalLanguageExplanation | null;
+}
+
+export async function fetchExplanation(applicationId: string, language: 'en' | 'hi' = 'en'): Promise<ApplicationExplanation> {
+  const r = await fetch(
+    `${API_BASE_URL}/predictions/${encodeURIComponent(applicationId)}/explain?language=${language}`,
+    { headers: { ...authHeader() }, cache: 'no-store' },
+  );
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail || `Explanation failed: ${r.status}`);
   }
-  return response.json();
+  return r.json();
+}
+
+export async function fetchCounterfactual(applicationId: string, language: 'en' | 'hi' = 'en'): Promise<CounterfactualResult> {
+  const r = await fetch(
+    `${API_BASE_URL}/predictions/${encodeURIComponent(applicationId)}/counterfactual?language=${language}`,
+    { headers: { ...authHeader() }, cache: 'no-store' },
+  );
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail || `Counterfactual failed: ${r.status}`);
+  }
+  return r.json();
 }

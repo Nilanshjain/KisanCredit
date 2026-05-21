@@ -25,6 +25,9 @@ lightgbm==4.1.0
 shap==0.43.0
 mlflow==2.8.1
 
+# LLM — Gemini for natural-language decision explanations + counter-factual narration
+google-generativeai==0.8.3
+
 # Utilities
 python-dotenv==1.0.0
 

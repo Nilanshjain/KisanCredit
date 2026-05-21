@@ -36,6 +36,9 @@ from .schemas import (
     PredictionRequest,
     PredictionResponse,
     ExplanationResponse,
+    NaturalLanguageExplanationModel,
+    CounterfactualChange,
+    CounterfactualResponse,
     ApplicationResponse,
     ApplicationSubmittedResponse,
     ApplicationTimelineEvent,
@@ -68,6 +71,8 @@ from ..database.repositories import (
     UserRepository,
 )
 from ..cache import recent_features as recent_features_cache
+from ..llm.gemini_explainer import explain_decision as llm_explain_decision, narrate_counterfactual as llm_narrate_counterfactual
+from ..models.counterfactual import find_counterfactual
 from ..database.connection import get_db, db_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -901,16 +906,22 @@ async def predict(request: PredictionRequest):
         )
 
 
+from fastapi import Query as _Query
+
+
 @app.get("/api/v1/predictions/{application_id}/explain", response_model=ExplanationResponse)
 async def explain_prediction(
     application_id: str,
+    language: str = _Query("en", regex="^(en|hi)$", description="en | hi"),
     session: AsyncSession = Depends(get_db),
 ):
-    """SHAP-based explanation for a previously-submitted application.
+    """SHAP-based explanation + Gemini natural-language narration.
 
-    Fetches the stored extracted_features for the application (set when
-    `/applications` was POSTed) and runs the SHAP TreeExplainer on them.
-    No query-string features — the application_id is the only input.
+    Fetches the stored extracted_features for the application, runs the SHAP
+    TreeExplainer, then hands the top contributors to the Gemini Flash layer
+    to produce a plain-English (or Hindi) narration. Falls back to a
+    deterministic template if Gemini is unavailable — endpoint never 500s on
+    LLM failure.
     """
     if not predictor or not explainer:
         raise HTTPException(
@@ -935,7 +946,6 @@ async def explain_prediction(
     try:
         import pandas as pd
 
-        # Drop metadata cols, align to model's expected feature order via predictor's validator
         metadata_cols = {'application_id', 'user_id'}
         feature_dict = {k: v for k, v in stored_features.items() if k not in metadata_cols}
         features_df = pd.DataFrame([feature_dict])
@@ -953,6 +963,20 @@ async def explain_prediction(
             for contrib in explanation['top_contributions']
         ]
 
+        # Hand the top contributors to Gemini for plain-language narration.
+        # Shape we send LLM matches the explainer's dict shape so the LLM
+        # module isn't coupled to FastAPI / SHAP types.
+        llm_input = [
+            {"feature": c['feature'], "contribution": c['shap_value']}
+            for c in explanation['top_contributions']
+        ]
+        nle = llm_explain_decision(
+            score=float(explanation['prediction']),
+            decision=str(explanation['decision']),
+            top_features=llm_input,
+            language=language,  # type: ignore[arg-type]
+        )
+
         return ExplanationResponse(
             application_id=application_id,
             profitability_score=explanation['prediction'],
@@ -960,6 +984,13 @@ async def explain_prediction(
             base_value=explanation['base_value'],
             top_contributors=top_contributors,
             explanation_timestamp=datetime.utcnow(),
+            natural_language=NaturalLanguageExplanationModel(
+                text=nle.text,
+                suggestion=nle.suggestion,
+                language=nle.language,
+                source=nle.source,
+                cached=nle.cached,
+            ),
         )
 
     except HTTPException:
@@ -969,6 +1000,87 @@ async def explain_prediction(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Explanation failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/predictions/{application_id}/counterfactual", response_model=CounterfactualResponse)
+async def counterfactual_explanation(
+    application_id: str,
+    language: str = _Query("en", regex="^(en|hi)$"),
+    session: AsyncSession = Depends(get_db),
+):
+    """'What would need to change for this decision to flip toward approve?'
+
+    Runs a greedy 1-D search over a curated whitelist of *actionable* features
+    (income, expenses, savings ratio, bill timeliness, discipline scores), then
+    narrates the result via Gemini. Returns reachable=False with an empty
+    changes list if no realistic set of changes flips the decision.
+    """
+    if not predictor:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model not loaded.",
+        )
+
+    application = await ApplicationRepository.get_by_id(session, application_id)
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application {application_id} not found",
+        )
+    stored = application.extracted_features or {}
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Application {application_id} has no stored features",
+        )
+
+    try:
+        metadata_keys = {'application_id', 'user_id'}
+        features = {k: float(v) for k, v in stored.items() if k not in metadata_keys}
+        cf = find_counterfactual(predictor, features)
+
+        # Find the latest prediction to know what decision band we started in
+        preds = await PredictionRepository.get_by_application(session, application.id)
+        starting_decision = preds[0].decision if preds else "manual_review"
+
+        nle = llm_narrate_counterfactual(
+            score=cf['starting_score'],
+            decision=starting_decision,
+            changes=cf['changes'],
+            language=language,  # type: ignore[arg-type]
+        )
+
+        return CounterfactualResponse(
+            application_id=application_id,
+            starting_score=cf['starting_score'],
+            final_score=cf['final_score'],
+            reachable=cf['reachable'],
+            changes=[
+                CounterfactualChange(
+                    feature=c['feature'],
+                    display_label=c['display_label'],
+                    display_unit=c.get('display_unit', ''),
+                    current=c['current'],
+                    suggested=c['suggested'],
+                    delta_score=c['delta_score'],
+                    new_score=c['new_score'],
+                )
+                for c in cf['changes']
+            ],
+            natural_language=NaturalLanguageExplanationModel(
+                text=nle.text, suggestion=nle.suggestion, language=nle.language,
+                source=nle.source, cached=nle.cached,
+            ),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Counterfactual failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Counterfactual failed: {str(e)}",
         )
 
 
