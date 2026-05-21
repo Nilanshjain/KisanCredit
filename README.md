@@ -74,6 +74,20 @@ trained and cross-validated on real applicants, calibrated, and fairness-checked
 This two-sided design — borrower *and* operator — is what makes it a production ML
 *system*, not just a model behind a form.
 
+### Trying the live demo
+
+The deployment runs with `DEMO_MODE=true`, so the OTP is shown on the login
+screen — no inbox needed:
+
+- **Borrower view** — sign in with *any* email, submit an application, watch the
+  lifecycle and decision.
+- **Operator view** — sign in with the demo operator email (in the deployed
+  app's login hint / pinned repo description) to reach `/admin`. That account is
+  auto-seeded with the admin role on every startup.
+
+A real production deploy sets `DEMO_MODE=false`; the OTP then only goes by email
+and admin promotion is a deliberate, separate step (`scripts/promote_admin.py`).
+
 ---
 
 ## Architecture

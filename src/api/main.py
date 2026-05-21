@@ -102,6 +102,43 @@ def _derive_model_version(p: "ProfitabilityPredictor | None") -> str:
     return "v1-synthetic"
 
 
+async def _seed_demo_admin() -> None:
+    """Ensure the configured DEMO_ADMIN_EMAIL account exists with role=admin.
+
+    Lets recruiters reach the operator dashboard on the deployed demo without
+    a CLI promotion step, and keeps working after a free-tier DB reset.
+    Best-effort: a failure here never blocks API startup.
+    """
+    import uuid as _uuid
+    from sqlalchemy import update as _update
+    from ..database.models import User
+
+    if not settings.demo_admin_email:
+        return
+    email = settings.demo_admin_email.strip().lower()
+    try:
+        async with db_manager.get_session() as session:
+            user = await UserRepository.get_by_email(session, email)
+            if user is None:
+                await UserRepository.create(session, {
+                    "user_id": f"USER_{_uuid.uuid4().hex[:12].upper()}",
+                    "email": email,
+                    "full_name": "Demo Operator",
+                    "role": "admin",
+                    "is_active": True,
+                    "email_verified": True,
+                })
+                logger.info(f"Seeded demo admin account: {email}")
+            elif user.role != "admin":
+                await session.execute(
+                    _update(User).where(User.id == user.id).values(role="admin")
+                )
+                logger.info(f"Promoted existing account to demo admin: {email}")
+            # get_session() commits on context exit
+    except Exception as e:
+        logger.warning(f"Demo-admin seeding skipped ({e})")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for application startup and shutdown."""
@@ -140,6 +177,11 @@ async def lifespan(app: FastAPI):
         # individual endpoints that need it will surface a clear 503.
         # Production deploys should monitor /health to catch persistent failures.
         logger.error(f"Database connection failed at startup (continuing): {e}")
+
+    # Seed the demo operator account so /admin is always reachable on the
+    # deployed portfolio demo. Idempotent — safe to run on every boot, and
+    # it survives a DB reset. No-op when DEMO_ADMIN_EMAIL is unset.
+    await _seed_demo_admin()
 
     logger.info(
         "KisanCredit API started",

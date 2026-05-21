@@ -73,6 +73,15 @@ class Settings(BaseSettings):
         default="KisanCredit <onboarding@resend.dev>", alias="RESEND_FROM_EMAIL"
     )
 
+    # Demo mode — for the public portfolio deployment, so recruiters can use
+    # the full app (incl. the operator dashboard) without inbox access.
+    # When demo_mode is on, /auth/send-otp echoes the OTP in its response so
+    # the login UI can surface it. A real production deploy leaves this off.
+    demo_mode: bool = Field(default=False, alias="DEMO_MODE")
+    # If set, this account is auto-seeded with role=admin on every startup so
+    # the operator dashboard is always reachable on the deployed demo.
+    demo_admin_email: str = Field(default="", alias="DEMO_ADMIN_EMAIL")
+
     class Config:
         """Pydantic config."""
         env_file = ".env"

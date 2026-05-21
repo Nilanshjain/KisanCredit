@@ -20,6 +20,7 @@ from ..database.models import User
 from ..auth.otp_manager import OTPManager
 from ..auth.jwt_handler import create_access_token, create_refresh_token, verify_token
 from ..auth.dependencies import get_current_active_user
+from ..utils.config import settings
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -74,7 +75,13 @@ class RefreshTokenRequest(BaseModel):
 
 @router.post("/send-otp", status_code=status.HTTP_200_OK)
 async def send_otp(request: SendOTPRequest):
-    """Generate an OTP and email it to the address."""
+    """Generate an OTP and email it to the address.
+
+    In demo mode (DEMO_MODE=true) the OTP is also returned in the response so
+    the public portfolio demo is fully usable without inbox access — recruiters
+    can complete login (including as the demo operator) straight from the UI.
+    A real production deploy leaves DEMO_MODE off, and the code only goes by email.
+    """
     otp = OTPManager.generate_otp()
     OTPManager.store_otp(request.email, otp)
     sent = await OTPManager.send_otp_email(request.email, otp)
@@ -86,12 +93,16 @@ async def send_otp(request: SendOTPRequest):
         )
 
     logger.info(f"OTP dispatched to {request.email}")
-    return {
+    response = {
         "success": True,
         "message": "OTP sent to your email",
         "email": request.email,
         "expires_in_minutes": 10,
     }
+    if settings.demo_mode:
+        response["demo_otp"] = otp
+        response["message"] = "Demo mode — code shown below (also emailed if Resend is configured)"
+    return response
 
 
 @router.post("/verify-otp", response_model=TokenResponse)

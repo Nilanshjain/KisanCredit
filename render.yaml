@@ -30,4 +30,9 @@ services:
         sync: false
       - key: RESEND_FROM_EMAIL          # Phase 3b — verified sender, e.g. onboarding@resend.dev
         sync: false
+      # --- demo deployment (set DEMO_MODE=true + an operator email) ---
+      - key: DEMO_MODE                  # true -> /auth/send-otp echoes the OTP for recruiters
+        value: "true"
+      - key: DEMO_ADMIN_EMAIL           # auto-seeded as role=admin so /admin is reachable
+        sync: false
     healthCheckPath: /api/v1/health

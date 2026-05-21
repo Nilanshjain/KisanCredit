@@ -9,6 +9,9 @@ export interface SendOTPResponse {
   message: string;
   email: string;
   expires_in_minutes: number;
+  /** Present only when the backend runs in DEMO_MODE — the OTP echoed back
+   *  so the public demo is usable without inbox access. */
+  demo_otp?: string;
 }
 
 export interface TokenResponse {

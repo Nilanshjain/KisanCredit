@@ -48,7 +48,13 @@ function LoginForm() {
       const res = await sendOTP(email)
       setOtpExpiresInMin(res.expires_in_minutes ?? 10)
       setStep('otp')
-      setInfo('Check your inbox for the 6-digit code. In demo mode, the code is also printed in the API server logs.')
+      if (res.demo_otp) {
+        // Demo mode — auto-fill the code so the recruiter can just click Verify
+        setOtp(res.demo_otp)
+        setInfo(`Demo mode — your code is ${res.demo_otp} (auto-filled below).`)
+      } else {
+        setInfo('Check your inbox for the 6-digit code.')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send OTP')
     } finally {
