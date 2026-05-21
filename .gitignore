@@ -78,12 +78,11 @@ data/cache/**
 !data/processed/.gitkeep
 !data/synthetic/.gitkeep
 
-# Models (ignore large model files; track the production artifacts only)
+# Models (ignore large model files; track the production artifact only)
 models/*.pkl
 models/*.joblib
 models/*.h5
 models/*.pt
-!models/profitability_model_latest.pkl
 !models/home_credit_v2.pkl
 mlruns/
 

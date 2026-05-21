@@ -24,7 +24,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from scripts.train_home_credit import engineer_features, select_feature_columns
+from src.features.home_credit_features import engineer_features, select_feature_columns
 
 DATA_PATH = Path("data/raw/home_credit/application_train.csv")
 MODEL_PATH = Path("models/home_credit_v2.pkl")

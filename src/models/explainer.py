@@ -27,15 +27,24 @@ class ModelExplainer:
     - Visualization support
     """
 
-    def __init__(self, model, feature_names: List[str]):
+    def __init__(self, model, feature_names: List[str], predicts_default_risk: bool = False,
+                 approve_threshold: float = 0.6, reject_threshold: float = 0.4):
         """Initialize explainer.
 
         Args:
             model: Trained LightGBM model
             feature_names: List of feature names
+            predicts_default_risk: when True the model outputs P(default); SHAP
+                values + base value are negated so the explanation is in the
+                same creditworthiness space as the predictor's score
+                (positive contribution = improves approval odds).
+            approve_threshold / reject_threshold: model-specific decision bands.
         """
         self.model = model
         self.feature_names = feature_names
+        self.predicts_default_risk = predicts_default_risk
+        self.approve_threshold = approve_threshold
+        self.reject_threshold = reject_threshold
         self.explainer: Optional[shap.TreeExplainer] = None
         self.base_value: Optional[float] = None
 
@@ -45,7 +54,9 @@ class ModelExplainer:
         """Initialize SHAP TreeExplainer."""
         try:
             self.explainer = shap.TreeExplainer(self.model)
-            self.base_value = float(self.explainer.expected_value)
+            base = float(self.explainer.expected_value)
+            # Flip into creditworthiness space if the model predicts default risk
+            self.base_value = (1.0 - base) if self.predicts_default_risk else base
 
             logger.info(
                 "SHAP explainer initialized",
@@ -89,6 +100,12 @@ class ModelExplainer:
         if shap_values.ndim > 1:
             shap_values = shap_values[0]
 
+        # A default-risk model's SHAP values explain P(default). Negate them so
+        # a positive contribution means "improves approval odds" — consistent
+        # with the creditworthiness score the predictor returns.
+        if self.predicts_default_risk:
+            shap_values = -shap_values
+
         # Get feature values
         if isinstance(features, pd.DataFrame):
             feature_values = features.iloc[0].values
@@ -118,7 +135,9 @@ class ModelExplainer:
             'base_value': float(self.base_value),
             'top_contributions': contributions[:top_n],
             'all_contributions': contributions,
-            'decision': decide_band(float(prediction))
+            'decision': decide_band(
+                float(prediction), self.approve_threshold, self.reject_threshold,
+            )
         }
 
         logger.debug(

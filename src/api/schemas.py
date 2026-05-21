@@ -453,39 +453,48 @@ class BatchPredictionResponse(BaseModel):
 
 
 class SimpleLoanApplicationRequest(BaseModel):
-    """Simplified loan application request for frontend form submissions.
+    """Loan application from the frontend form.
 
-    This schema accepts basic personal and financial information from the frontend form
-    and generates synthetic feature values for ML prediction in the demo.
+    Every field here is something an applicant can genuinely answer at
+    application time; src/features/home_credit_features.py maps them onto the
+    v2 model's feature space. There are deliberately NO credit-bureau fields —
+    the model is trained without them so it works for thin-file applicants.
     """
-    # Personal Information
+    # Personal
     name: str = Field(..., min_length=2, max_length=100, description="Applicant's full name")
     mobile: str = Field(..., pattern=r"^\d{10}$", description="10-digit mobile number")
-    date_of_birth: str = Field(..., description="Date of birth in YYYY-MM-DD format")
+    date_of_birth: str = Field(..., description="Date of birth, YYYY-MM-DD")
     gender: str = Field(..., pattern=r"^(male|female|other)$", description="Gender")
     pincode: str = Field(..., pattern=r"^\d{6}$", description="6-digit pincode")
-    occupation: str = Field(..., min_length=2, max_length=50, description="Occupation type")
+    occupation: str = Field(..., min_length=2, max_length=50, description="Occupation")
 
-    # Loan Information
-    loan_amount: float = Field(..., gt=0, description="Requested loan amount in INR")
+    # Loan
+    loan_amount: float = Field(..., gt=0, description="Requested loan amount, INR")
     loan_purpose: str = Field(..., min_length=2, max_length=100, description="Purpose of loan")
 
-    # Financial Information
-    monthly_income: float = Field(..., gt=0, description="Monthly income in INR")
-    monthly_expenses: float = Field(..., gt=0, description="Monthly expenses in INR")
+    # Financial
+    monthly_income: float = Field(..., gt=0, description="Monthly income, INR")
+    monthly_expenses: float = Field(..., gt=0, description="Monthly expenses, INR")
+
+    # Employment & household — modelled features (map to Home Credit columns)
+    employment_years: float = Field(..., ge=0, le=50, description="Years in current employment")
+    employment_type: str = Field("Working", description="Working | Commercial associate | State servant | Pensioner | Businessman")
+    education_level: str = Field("Secondary / secondary special", description="Home Credit education category")
+    housing_type: str = Field("House / apartment", description="Home Credit housing category")
+    dependents: int = Field(0, ge=0, le=15, description="Number of children / dependents")
+    owns_car: bool = Field(False, description="Owns a car")
+    owns_property: bool = Field(False, description="Owns property / real estate")
 
     @validator('loan_amount')
     def validate_loan_amount(cls, v):
-        """Validate loan amount is within acceptable range."""
-        if v > 500000:  # Max 5 Lakh
-            raise ValueError('Loan amount cannot exceed ₹5,00,000')
-        if v < 1000:  # Min 1000
-            raise ValueError('Loan amount must be at least ₹1,000')
+        if v > 5_000_000:
+            raise ValueError('Loan amount cannot exceed ₹50,00,000')
+        if v < 50_000:
+            raise ValueError('Loan amount must be at least ₹50,000')
         return v
 
     @validator('monthly_expenses')
     def validate_expenses(cls, v, values):
-        """Validate expenses are reasonable relative to income."""
         if 'monthly_income' in values and v > values['monthly_income'] * 1.5:
             raise ValueError('Monthly expenses cannot exceed 150% of monthly income')
         return v
@@ -493,16 +502,15 @@ class SimpleLoanApplicationRequest(BaseModel):
     class Config:
         schema_extra = {
             "example": {
-                "name": "Rajesh Kumar",
-                "mobile": "9876543210",
-                "date_of_birth": "1985-01-15",
-                "gender": "male",
-                "pincode": "110001",
-                "occupation": "Farmer",
-                "loan_amount": 50000,
-                "loan_purpose": "Agriculture/Farming",
-                "monthly_income": 35000,
-                "monthly_expenses": 20000
+                "name": "Rajesh Kumar", "mobile": "9876543210",
+                "date_of_birth": "1985-01-15", "gender": "male",
+                "pincode": "110001", "occupation": "Farmer",
+                "loan_amount": 50000, "loan_purpose": "Agriculture/Farming",
+                "monthly_income": 35000, "monthly_expenses": 20000,
+                "employment_years": 6, "employment_type": "Working",
+                "education_level": "Secondary / secondary special",
+                "housing_type": "House / apartment",
+                "dependents": 2, "owns_car": False, "owns_property": True,
             }
         }
 

@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     )
 
     # Model
-    model_path: str = Field(default="models/profitability_model.pkl", alias="MODEL_PATH")
+    model_path: str = Field(default="models/home_credit_v2.pkl", alias="MODEL_PATH")
 
     # Rate Limiting
     rate_limit_requests: int = Field(default=100, alias="RATE_LIMIT_REQUESTS")

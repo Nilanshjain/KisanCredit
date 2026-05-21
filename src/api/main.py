@@ -62,6 +62,7 @@ from .middleware import (
 from ..models import ProfitabilityPredictor, ModelExplainer
 from ..features import FeatureEngineeringPipeline
 from ..features.feature_engineering import FeatureExtractionError
+from ..features.home_credit_features import features_from_simple_form
 from ..utils.logger import get_logger
 from ..utils.config import settings
 from ..database.repositories import (
@@ -70,6 +71,8 @@ from ..database.repositories import (
     ApplicationStatusRepository,
     UserRepository,
 )
+from ..database.models import User
+from ..auth.dependencies import get_current_active_user
 from ..cache import recent_features as recent_features_cache
 from ..llm.gemini_explainer import explain_decision as llm_explain_decision, narrate_counterfactual as llm_narrate_counterfactual
 from ..models.counterfactual import find_counterfactual
@@ -162,7 +165,10 @@ async def lifespan(app: FastAPI):
 
     # SHAP explainer — wires onto the already-loaded model + its feature names
     logger.info("Initializing SHAP explainer...")
-    explainer = ModelExplainer(predictor.model, predictor.feature_names)
+    explainer = ModelExplainer(
+        predictor.model, predictor.feature_names, predictor.predicts_default_risk,
+        predictor.approve_threshold, predictor.reject_threshold,
+    )
 
     # Derive model version from the artifact metadata (v1-synthetic vs v2-home-credit)
     global MODEL_VERSION
@@ -469,94 +475,6 @@ async def submit_application(
         )
 
 
-def _synthesize_application_payload(simple: SimpleLoanApplicationRequest) -> dict:
-    """Build a LoanApplicationRequest-shaped dict from the simpler frontend form.
-
-    Synthesises a plausible 90-day SMS/contact/location/behavioral payload from
-    monthly_income and monthly_expenses so the existing feature pipeline can
-    run server-side. The v1 model was trained on this shape; in Phase 3 the
-    Home Credit retrain replaces this with a real feature schema.
-    """
-    from datetime import timedelta
-    import uuid
-
-    months = 3
-    txns: list[dict] = []
-    now = datetime.utcnow()
-
-    # `source` is what the feature extractors actually read (legacy column from
-    # the synthetic training set). `merchant_category` stays in the public schema
-    # for API stability. They carry the same semantic data here.
-    income_sources = ["Salary", "Freelance"]  # >1 distinct gives a non-zero income_source_diversity
-    debit_categories = [
-        # essential (recognized by expense + discipline extractors)
-        "Electricity Bill", "Mobile Recharge", "Grocery", "Loan EMI",
-        # mixed essentials/discretionary
-        "Insurance", "Medical",
-        # discretionary
-        "Restaurant", "Shopping",
-    ]
-
-    # Credits: one per month from the primary source, plus one occasional secondary
-    for m in range(months):
-        src = income_sources[0] if m % 2 == 0 else income_sources[1]
-        txns.append({
-            "transaction_id": f"TXN_C_{m}_{uuid.uuid4().hex[:6]}",
-            "timestamp": (now - timedelta(days=30 * m)).isoformat(),
-            "amount": float(simple.monthly_income),
-            "transaction_type": "credit",
-            "merchant_category": src,
-            "source": src,
-            "is_credit": True,
-        })
-
-    # Debits: spread across recognised categories
-    n_debits_per_month = len(debit_categories)
-    for m in range(months):
-        for d, category in enumerate(debit_categories):
-            day_offset = 30 * m + (d * 3 + 2)
-            amt = simple.monthly_expenses / n_debits_per_month
-            txns.append({
-                "transaction_id": f"TXN_D_{m}_{d}_{uuid.uuid4().hex[:6]}",
-                "timestamp": (now - timedelta(days=day_offset)).isoformat(),
-                "amount": float(amt),
-                "transaction_type": "debit",
-                "merchant_category": category,
-                "source": category,
-                "is_credit": False,
-            })
-
-    is_urban = simple.pincode[:1] in ("1", "4", "5", "6", "7")  # crude metro/non-metro heuristic
-    return {
-        "user_id": f"USER_{simple.mobile}",
-        "loan_amount": simple.loan_amount,
-        "loan_purpose": simple.loan_purpose,
-        "sms_transactions": txns,
-        "contact_metadata": {
-            "total_contacts": 120,
-            "family_contacts": 15,
-            "business_contacts": 40,
-            "government_contacts": 3,
-            "avg_call_duration": 150.0,
-            "contact_diversity_score": 0.65,
-        },
-        "location_pattern": {
-            "unique_locations": 4,
-            "home_location": {"lat": 28.6139, "lon": 77.2090},
-            "travel_radius_km": 18.0,
-            "area_type": "urban" if is_urban else "rural",
-            "location_stability_score": 0.78,
-        },
-        "behavioral_data": {
-            "app_usage_hours_per_day": 3.5,
-            "night_activity_ratio": 0.12,
-            "gambling_indicators": 0,
-            "financial_app_usage": True,
-            "literacy_score": 0.7,
-        },
-    }
-
-
 # --- lifecycle constants ---
 # Real loans take days to decide. We compress to ~15s so the UX feels like a
 # real product (not "instant decision") without being painful to wait through.
@@ -614,35 +532,14 @@ async def _run_application_lifecycle(application_db_id: str, public_application_
             logger.error(f"Background task: application {public_application_id} vanished mid-lifecycle")
             return
 
-        # Re-hydrate the payload that was persisted at submit time
-        app_data = {
-            'application_id': public_application_id,
-            'user_id': app.user_id,
-            'sms_transactions': app.sms_transactions or [],
-            'contact_metadata': app.contact_metadata or {},
-            'location_pattern': app.location_pattern or {},
-            'behavioral_data': app.behavioral_data or {},
-        }
+        # Re-hydrate the simple form persisted at submit time, map it onto the
+        # v2 (Home Credit) feature schema, and score with the production model.
+        simple_form = (app.behavioral_data or {}).get("simple_form", {})
 
         try:
-            features = feature_pipeline.extract_features(app_data)
-            metadata_cols = ['application_id', 'user_id']
-            X = pd.DataFrame([{k: v for k, v in features.items() if k not in metadata_cols}])
+            features = features_from_simple_form(simple_form, predictor.feature_names)
+            X = pd.DataFrame([features])
             result = predictor.predict(X, return_confidence=True)
-        except FeatureExtractionError as e:
-            # Bad data — transition to rejected with the extractor name so admin can debug
-            await ApplicationRepository.update_status(session, public_application_id, ERROR_STATUS)
-            await ApplicationStatusRepository.record_transition(
-                session,
-                application_id=application_db_id,
-                from_status=REVIEW_STATUS,
-                to_status=ERROR_STATUS,
-                actor_type="system",
-                reason=f"feature_extraction_failed: {e.extractor}",
-            )
-            await session.commit()
-            logger.warning(f"Lifecycle rejected {public_application_id}: {e}")
-            return
         except Exception as e:
             # Capture both type AND a short str(e) so the failure mode survives the
             # lossy structured-logger / cp1252-stdout path on Windows. Keep ASCII-only
@@ -719,52 +616,35 @@ async def _run_application_lifecycle(application_db_id: str, public_application_
 async def submit_simple_application(
     simple: SimpleLoanApplicationRequest,
     background: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db),
 ):
     """Submit a loan application via the simplified frontend form.
 
     Async-lifecycle flow: persist the application immediately in 'submitted'
-    status, schedule a background task that walks it through under_review ->
-    decided (with inference) over ~15 seconds, and return right away with the
-    application_id so the frontend can poll the timeline.
+    status (tied to the authenticated user), schedule a background task that
+    walks it through under_review -> decided over ~15 seconds, and return the
+    application_id so the frontend can poll the timeline. Inference at the
+    'decided' transition maps the form onto the v2 Home Credit feature schema.
     """
-    payload = _synthesize_application_payload(simple)
-    full_request = LoanApplicationRequest(**payload)
     application_id = f"APP_{uuid.uuid4().hex[:12].upper()}"
-
-    # Resolve the user FK. applications.user_id references users.id (UUID PK),
-    # NOT the public user_id string. Look up by mobile (which the OTP flow uses
-    # to create the user); mint a lightweight shell if no row exists so anonymous
-    # curl tests and pre-auth flows still produce a valid FK.
-    user = await UserRepository.get_by_phone(session, simple.mobile)
-    if user is None:
-        user = await UserRepository.create(session, {
-            'user_id': f"USER_{simple.mobile}",
-            'phone_number': simple.mobile,
-            'full_name': simple.name,
-            'is_active': True,
-        })
 
     logger.info(
         "Application submitted (async lifecycle)",
         application_id=application_id,
-        user_id=user.user_id,
-        user_db_id=user.id,
-        loan_amount=full_request.loan_amount,
+        user_id=current_user.user_id,
+        loan_amount=simple.loan_amount,
     )
 
-    # model_dump(mode='json') serialises nested datetime objects to ISO strings;
-    # plain .dict() leaves them as datetime objects which SQLAlchemy's JSON serializer rejects.
+    # The raw form is stashed in behavioral_data; the lifecycle worker reads it
+    # back and maps it onto the v2 model's feature schema at decision time.
     db_application = await ApplicationRepository.create(session, {
         'application_id': application_id,
-        'user_id': user.id,
-        'loan_amount': full_request.loan_amount,
-        'loan_purpose': full_request.loan_purpose,
+        'user_id': current_user.id,
+        'loan_amount': simple.loan_amount,
+        'loan_purpose': simple.loan_purpose,
         'status': INITIAL_STATUS,
-        'sms_transactions': [txn.model_dump(mode='json') for txn in full_request.sms_transactions],
-        'contact_metadata': full_request.contact_metadata.model_dump(mode='json'),
-        'location_pattern': full_request.location_pattern.model_dump(mode='json'),
-        'behavioral_data': full_request.behavioral_data.model_dump(mode='json'),
+        'behavioral_data': {'simple_form': simple.model_dump()},
         'submitted_at': datetime.utcnow(),
     })
     await ApplicationStatusRepository.record_transition(
@@ -773,7 +653,7 @@ async def submit_simple_application(
         from_status=None,
         to_status=INITIAL_STATUS,
         actor_type="user",
-        actor_id=user.user_id,
+        actor_id=current_user.user_id,
     )
     await session.commit()
 
@@ -1070,17 +950,17 @@ async def counterfactual_explanation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application {application_id} not found",
         )
-    stored = application.extracted_features or {}
-    if not stored:
+    simple_form = (application.behavioral_data or {}).get("simple_form", {})
+    if not simple_form:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Application {application_id} has no stored features",
+            detail=f"Application {application_id} has no stored form to analyse",
         )
 
     try:
-        metadata_keys = {'application_id', 'user_id'}
-        features = {k: float(v) for k, v in stored.items() if k not in metadata_keys}
-        cf = find_counterfactual(predictor, features)
+        # Counter-factual perturbs the form fields and re-maps through the v2
+        # feature pipeline so every derived feature stays consistent.
+        cf = find_counterfactual(predictor, simple_form, predictor.feature_names)
 
         # Find the latest prediction to know what decision band we started in
         preds = await PredictionRepository.get_by_application(session, application.id)

@@ -21,13 +21,15 @@ export interface LoanApplicationData {
   loanPurpose: string;
   monthlyIncome: number;
   monthlyExpenses: number;
-  // Form also collects these but the server synthesises richer signals from
-  // monthly_income/expenses, so they're not sent. Kept on the type for the
-  // existing form UI.
-  upiTransactions?: number;
-  totalContacts?: number;
-  smsCount?: number;
-  appUsageMinutes?: number;
+  // Employment & household — these are real model inputs (mapped onto the
+  // Home Credit feature schema server-side).
+  employmentYears: number;
+  employmentType: string;     // Home Credit NAME_INCOME_TYPE value
+  educationLevel: string;     // Home Credit NAME_EDUCATION_TYPE value
+  housingType: string;        // Home Credit NAME_HOUSING_TYPE value
+  dependents: number;
+  ownsCar: boolean;
+  ownsProperty: boolean;
 }
 
 export interface PredictionResponse {
@@ -97,6 +99,13 @@ export async function submitApplication(data: LoanApplicationData): Promise<Appl
     loan_purpose: data.loanPurpose,
     monthly_income: data.monthlyIncome,
     monthly_expenses: data.monthlyExpenses,
+    employment_years: data.employmentYears,
+    employment_type: data.employmentType,
+    education_level: data.educationLevel,
+    housing_type: data.housingType,
+    dependents: data.dependents,
+    owns_car: data.ownsCar,
+    owns_property: data.ownsProperty,
   };
 
   const response = await fetch(`${API_BASE_URL}/applications/simple`, {

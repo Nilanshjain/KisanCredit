@@ -16,16 +16,26 @@ from ..utils.config import settings
 
 logger = get_logger(__name__)
 
-# Decision thresholds — documented three-band logic
+# Fallback decision thresholds. The real thresholds are model-specific and
+# derived from the score distribution at training time (stored in the model
+# artifact's metadata.decision_thresholds) — see decide_band below. These
+# defaults only apply if a model ships without them.
 APPROVE_THRESHOLD = 0.6
 REJECT_THRESHOLD = 0.4
 
 
-def decide_band(score: float) -> str:
-    """Map a profitability score to one of three decisions."""
-    if score > APPROVE_THRESHOLD:
+def decide_band(score: float, approve_threshold: float = APPROVE_THRESHOLD,
+                reject_threshold: float = REJECT_THRESHOLD) -> str:
+    """Map a creditworthiness score to one of three decisions.
+
+    Thresholds must match the model's score distribution: a calibrated
+    default-risk model outputs a narrow creditworthiness band, so hardcoded
+    0.6/0.4 would approve everyone. The predictor passes model-specific
+    thresholds derived from the training-set score percentiles.
+    """
+    if score >= approve_threshold:
         return "approve"
-    if score < REJECT_THRESHOLD:
+    if score < reject_threshold:
         return "reject"
     return "manual_review"
 
@@ -51,16 +61,19 @@ class ProfitabilityPredictor:
         self.feature_importance: Optional[Dict[str, float]] = None
         self.metadata: Optional[Dict] = None
         # Per-feature quantile bin edges from the training set, used as the PSI
-        # reference distribution for drift detection. v1 (synthetic) model
-        # doesn't ship with these; v2 (Home Credit) will. None -> /admin/drift
-        # surfaces a "baseline not available" indicator instead of fake PSI.
+        # reference distribution for drift detection.
         self.feature_quantiles: Optional[Dict[str, List[float]]] = None
+        # The Home Credit model predicts P(default) — high = bad. The rest of
+        # the system expects a "creditworthiness" score where high = good
+        # (decide_band approves >0.6). When this flag is set, predict() returns
+        # 1 - P(default) so every downstream consumer stays consistent.
+        self.predicts_default_risk: bool = False
 
         if model_path:
             self.load_model(model_path)
         else:
-            # Try to load latest model
-            default_path = Path("models") / "profitability_model_latest.pkl"
+            # Try to load the production model
+            default_path = Path("models") / "home_credit_v2.pkl"
             if default_path.exists():
                 self.load_model(str(default_path))
             else:
@@ -80,7 +93,14 @@ class ProfitabilityPredictor:
         self.feature_names = artifact['feature_names']
         self.feature_importance = artifact.get('feature_importance')
         self.metadata = artifact.get('metadata', {})
+        # Model-specific decision thresholds derived from the training score
+        # distribution; fall back to the generic 0.6/0.4 if absent.
+        _dt = (self.metadata or {}).get('decision_thresholds') or {}
+        self.approve_threshold = float(_dt.get('approve', APPROVE_THRESHOLD))
+        self.reject_threshold = float(_dt.get('reject', REJECT_THRESHOLD))
         self.feature_quantiles = artifact.get('feature_quantiles')
+        # Home Credit's TARGET=1 means default — the model outputs P(default).
+        self.predicts_default_risk = (self.metadata or {}).get('dataset') == 'home-credit-default-risk'
 
         load_time = time.time() - start_time
 
@@ -103,20 +123,42 @@ class ProfitabilityPredictor:
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
 
-        # Ensure all required features are present
+        features = features.copy()
+
+        # Impute absent / NaN features with the training-set median rather than
+        # zero. Zero is an extreme value for most features (external scores,
+        # normalized building stats, ...), so zero-filling pushes the input far
+        # outside the training distribution and the model returns garbage.
+        # The training median keeps un-collected features at a realistic
+        # "average applicant" value so the prediction is driven by the fields
+        # that actually vary (income, loan amount, age, ...).
+        medians = self._feature_medians()
+
         missing_features = set(self.feature_names) - set(features.columns)
-        if missing_features:
-            logger.warning(f"Missing features: {missing_features}. Filling with zeros.")
-            for feat in missing_features:
-                features[feat] = 0
+        for feat in missing_features:
+            features[feat] = medians.get(feat, 0.0)
 
         # Select and order features correctly
         features = features[self.feature_names]
 
-        # Handle missing values
-        features = features.fillna(0)
+        # Fill any remaining NaNs per-column with that column's training median
+        for feat in self.feature_names:
+            if features[feat].isna().any():
+                features[feat] = features[feat].fillna(medians.get(feat, 0.0))
 
         return features
+
+    def _feature_medians(self) -> Dict[str, float]:
+        """Per-feature training median, derived from the persisted quantile
+        bin edges (index 5 of the 11 edges == the 0.5 quantile). Cached."""
+        if getattr(self, "_median_cache", None) is not None:
+            return self._median_cache
+        medians: Dict[str, float] = {}
+        for feat, edges in (self.feature_quantiles or {}).items():
+            if edges and len(edges) >= 6:
+                medians[feat] = float(edges[5])
+        self._median_cache = medians
+        return medians
 
     def predict(
         self,
@@ -150,6 +192,10 @@ class ProfitabilityPredictor:
         # Clip to valid range [0, 1]
         score = np.clip(score, 0.0, 1.0)
 
+        # Convert P(default) -> creditworthiness so high = good downstream
+        if self.predicts_default_risk:
+            score = 1.0 - score
+
         prediction_time = time.time() - start_time
 
         logger.debug(
@@ -164,7 +210,7 @@ class ProfitabilityPredictor:
             return {
                 'score': float(score),
                 'confidence': float(confidence),
-                'decision': decide_band(score),
+                'decision': decide_band(score, self.approve_threshold, self.reject_threshold),
                 'prediction_time_ms': round(prediction_time * 1000, 2)
             }
 
@@ -198,6 +244,10 @@ class ProfitabilityPredictor:
         # Clip to valid range [0, 1]
         scores = np.clip(scores, 0.0, 1.0)
 
+        # Convert P(default) -> creditworthiness so high = good downstream
+        if self.predicts_default_risk:
+            scores = 1.0 - scores
+
         prediction_time = time.time() - start_time
         throughput = len(scores) / prediction_time if prediction_time > 0 else 0
 
@@ -219,7 +269,7 @@ class ProfitabilityPredictor:
             results = pd.DataFrame({
                 'score': scores,
                 'confidence': confidences,
-                'decision': [decide_band(s) for s in scores]
+                'decision': [decide_band(s, self.approve_threshold, self.reject_threshold) for s in scores]
             })
 
             return results
@@ -297,7 +347,7 @@ class ProfitabilityPredictor:
 
         return {
             'score': float(score),
-            'decision': decide_band(score),
+            'decision': decide_band(score, self.approve_threshold, self.reject_threshold),
             'top_contributors': [
                 {
                     'feature': feat,

@@ -14,26 +14,46 @@ import {
   ArrowRight,
   ArrowLeft,
   CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  Smartphone,
-  TrendingUp,
-  Home,
-  Sparkles
+  Building2,
+  Sparkles,
 } from 'lucide-react'
 import { submitApplication, type LoanApplicationData } from '@/lib/api'
 import { Button, Input, Card, Alert, Skeleton } from '@/components/ui'
 
-type FormStep = 'personal' | 'location' | 'loan' | 'financial' | 'digital'
+type FormStep = 'personal' | 'location' | 'loan' | 'financial' | 'employment'
 type FlowState = 'form' | 'loading'   // 'result' lives on /dashboard/applications/[id] now
 
 const STEPS = [
-  { id: 'personal', title: 'Personal Info', icon: User },
+  { id: 'personal', title: 'Personal', icon: User },
   { id: 'location', title: 'Location', icon: Briefcase },
-  { id: 'loan', title: 'Loan Details', icon: IndianRupee },
+  { id: 'loan', title: 'Loan', icon: IndianRupee },
   { id: 'financial', title: 'Financial', icon: FileText },
-  { id: 'digital', title: 'Digital Data', icon: Smartphone },
+  { id: 'employment', title: 'Employment', icon: Building2 },
 ] as const
+
+// Home Credit category values — sent as-is so the backend maps them directly.
+const EDUCATION_OPTIONS = [
+  'Secondary / secondary special',
+  'Higher education',
+  'Incomplete higher',
+  'Lower secondary',
+  'Academic degree',
+]
+const HOUSING_OPTIONS = [
+  'House / apartment',
+  'Rented apartment',
+  'With parents',
+  'Municipal apartment',
+  'Office apartment',
+  'Co-op apartment',
+]
+const EMPLOYMENT_TYPE_OPTIONS = [
+  'Working',
+  'Commercial associate',
+  'State servant',
+  'Pensioner',
+  'Businessman',
+]
 
 export default function ApplyPage() {
   const router = useRouter()
@@ -51,10 +71,13 @@ export default function ApplyPage() {
     loanPurpose: '',
     monthlyIncome: 0,
     monthlyExpenses: 0,
-    upiTransactions: 50,
-    totalContacts: 300,
-    smsCount: 500,
-    appUsageMinutes: 180,
+    employmentYears: 0,
+    employmentType: 'Working',
+    educationLevel: 'Secondary / secondary special',
+    housingType: 'House / apartment',
+    dependents: 0,
+    ownsCar: false,
+    ownsProperty: false,
   })
   const [error, setError] = useState<string>('')
 
@@ -68,14 +91,18 @@ export default function ApplyPage() {
     }
   }, [isAuthenticated, router])
 
+  const NUMERIC_FIELDS = ['loanAmount', 'monthlyIncome', 'monthlyExpenses', 'employmentYears', 'dependents']
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: ['loanAmount', 'monthlyIncome', 'monthlyExpenses', 'upiTransactions', 'totalContacts', 'smsCount', 'appUsageMinutes'].includes(name)
-        ? parseFloat(value) || 0
-        : value
-    }))
+    const target = e.target
+    const { name, value } = target
+    let next: string | number | boolean = value
+    if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+      next = target.checked
+    } else if (NUMERIC_FIELDS.includes(name)) {
+      next = parseFloat(value) || 0
+    }
+    setFormData(prev => ({ ...prev, [name]: next }))
   }
 
   const handleNext = () => {
@@ -369,10 +396,11 @@ export default function ApplyPage() {
                     name="loanAmount"
                     value={formData.loanAmount || ''}
                     onChange={handleInputChange}
-                    placeholder="₹10,000 - ₹1,00,000"
-                    min="1000"
-                    max="100000"
-                    step="1000"
+                    placeholder="₹3,00,000 - ₹30,00,000"
+                    min="50000"
+                    max="5000000"
+                    step="50000"
+                    helperText="Typical range ₹3-30 lakh"
                     icon={<IndianRupee className="w-5 h-5" />}
                     required
                   />
@@ -413,9 +441,10 @@ export default function ApplyPage() {
                     name="monthlyIncome"
                     value={formData.monthlyIncome || ''}
                     onChange={handleInputChange}
-                    placeholder="Your monthly income"
+                    placeholder="e.g. 45,000"
                     min="0"
                     step="1000"
+                    helperText="Take-home pay per month"
                     icon={<IndianRupee className="w-5 h-5" />}
                     required
                   />
@@ -435,10 +464,10 @@ export default function ApplyPage() {
               </motion.div>
             )}
 
-            {/* Step 5: Digital Activity */}
-            {currentStep === 'digital' && (
+            {/* Step 5: Employment & Household */}
+            {currentStep === 'employment' && (
               <motion.div
-                key="digital"
+                key="employment"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -446,54 +475,83 @@ export default function ApplyPage() {
               >
                 <div>
                   <h2 className="text-2xl font-bold text-stone-900 flex items-center gap-2 mb-2">
-                    <Smartphone className="w-6 h-6 text-harvest-600" />
-                    Digital Activity
+                    <Building2 className="w-6 h-6 text-harvest-600" />
+                    Employment &amp; Household
                   </h2>
-                  <p className="text-sm text-stone-600">Optional - helps improve approval chances</p>
+                  <p className="text-sm text-stone-600">These factors directly shape your credit assessment.</p>
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4">
                   <Input
-                    label="UPI Transactions (per month)"
+                    label="Years in current employment"
                     type="number"
-                    name="upiTransactions"
-                    value={formData.upiTransactions || ''}
+                    name="employmentYears"
+                    value={formData.employmentYears || ''}
                     onChange={handleInputChange}
-                    placeholder="Approx. UPI transactions"
+                    placeholder="e.g. 5"
                     min="0"
+                    max="50"
+                    step="0.5"
+                    required
                   />
+                  <div>
+                    <label className="label label-required">Employment type</label>
+                    <select name="employmentType" value={formData.employmentType} onChange={handleInputChange} required className="input">
+                      {EMPLOYMENT_TYPE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label label-required">Education</label>
+                    <select name="educationLevel" value={formData.educationLevel} onChange={handleInputChange} required className="input">
+                      {EDUCATION_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label label-required">Housing</label>
+                    <select name="housingType" value={formData.housingType} onChange={handleInputChange} required className="input">
+                      {HOUSING_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
                   <Input
-                    label="Total Contacts"
+                    label="Number of dependents"
                     type="number"
-                    name="totalContacts"
-                    value={formData.totalContacts || ''}
+                    name="dependents"
+                    value={formData.dependents || ''}
                     onChange={handleInputChange}
-                    placeholder="Contacts in phone"
+                    placeholder="e.g. 2"
                     min="0"
+                    max="15"
+                    required
                   />
-                  <Input
-                    label="SMS Count (per month)"
-                    type="number"
-                    name="smsCount"
-                    value={formData.smsCount || ''}
-                    onChange={handleInputChange}
-                    placeholder="Approx. SMS received"
-                    min="0"
-                  />
-                  <Input
-                    label="App Usage (minutes/day)"
-                    type="number"
-                    name="appUsageMinutes"
-                    value={formData.appUsageMinutes || ''}
-                    onChange={handleInputChange}
-                    placeholder="Daily app usage"
-                    min="0"
-                  />
+                </div>
+
+                <div className="flex flex-wrap gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="ownsCar"
+                      checked={formData.ownsCar}
+                      onChange={handleInputChange}
+                      className="w-4 h-4 text-harvest-600 border-stone-300 rounded focus:ring-harvest-500"
+                    />
+                    <span className="text-sm text-stone-700">I own a car</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="ownsProperty"
+                      checked={formData.ownsProperty}
+                      onChange={handleInputChange}
+                      className="w-4 h-4 text-harvest-600 border-stone-300 rounded focus:ring-harvest-500"
+                    />
+                    <span className="text-sm text-stone-700">I own property / real estate</span>
+                  </label>
                 </div>
 
                 <Alert variant="info">
                   <p className="text-sm">
-                    <strong>Note:</strong> Your data is encrypted and secure. We only use it for loan assessment. Processing fee of ₹8 applies on approval.
+                    Your details are used only for this credit assessment. The decision and an
+                    explanation of the factors behind it appear on the next screen.
                   </p>
                 </Alert>
               </motion.div>

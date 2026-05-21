@@ -49,6 +49,10 @@ from sklearn.preprocessing import StandardScaler
 # Repo root on sys.path so `python scripts/train_home_credit.py` works
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Feature engineering is shared with the serving path (src/api) so the model
+# is scored at inference time by exactly the code it was trained on.
+from src.features.home_credit_features import engineer_features, select_feature_columns  # noqa: E402
+
 DATA_DIR = Path("data/raw/home_credit")
 MODELS_DIR = Path("models")
 NOTEBOOKS_DIR = Path("notebooks")
@@ -83,88 +87,9 @@ def load_application_data() -> pd.DataFrame:
     return df
 
 
-# ─────────────────────────── 2. Feature engineering ─────────────────────
-
-
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Map Home Credit columns onto KisanCredit's 6-category taxonomy.
-
-    Each derived feature carries a comment about which legacy category it
-    aligns with — this makes the v1 → v2 narrative explicit in the README.
-    """
-    print(f"[fe] starting feature engineering ({df.shape[1]} raw cols)")
-    out = df.copy()
-
-    # ─── income (40% weight in legacy scoring) ───
-    out["income_monthly_avg"] = out["AMT_INCOME_TOTAL"] / 12.0
-    out["income_to_credit_ratio"] = out["AMT_INCOME_TOTAL"] / (out["AMT_CREDIT"] + 1.0)
-    out["income_to_annuity_ratio"] = out["AMT_INCOME_TOTAL"] / (out["AMT_ANNUITY"] + 1.0)
-    out["income_per_family_member"] = out["AMT_INCOME_TOTAL"] / (out["CNT_FAM_MEMBERS"] + 1.0)
-    out["income_log"] = np.log1p(out["AMT_INCOME_TOTAL"])
-
-    # ─── expense / debt burden (25% weight) ───
-    out["annuity_to_income_ratio"] = out["AMT_ANNUITY"] / (out["AMT_INCOME_TOTAL"] + 1.0)
-    out["credit_to_goods_ratio"] = out["AMT_CREDIT"] / (out["AMT_GOODS_PRICE"].fillna(0) + 1.0)
-    out["credit_log"] = np.log1p(out["AMT_CREDIT"])
-
-    # ─── discipline (10% weight) — payment history proxies ───
-    # Most-recent and average days since credit-bureau contacts and previous documents
-    out["days_employed_safe"] = out["DAYS_EMPLOYED"].replace(365243, np.nan).abs()
-    out["days_birth_years"] = (out["DAYS_BIRTH"].abs() / 365.0).round(1)
-    out["employment_ratio"] = out["days_employed_safe"] / out["DAYS_BIRTH"].abs().replace(0, np.nan)
-    out["doc_completeness"] = out[[c for c in out.columns if c.startswith("FLAG_DOCUMENT_")]].sum(axis=1)
-
-    # ─── social network (15% weight) — observed via 30/60-day contact circles ───
-    obs30 = out.get("OBS_30_CNT_SOCIAL_CIRCLE")
-    obs60 = out.get("OBS_60_CNT_SOCIAL_CIRCLE")
-    out["social_obs_total"] = (obs30.fillna(0) if obs30 is not None else 0) + (obs60.fillna(0) if obs60 is not None else 0)
-    def30 = out.get("DEF_30_CNT_SOCIAL_CIRCLE")
-    def60 = out.get("DEF_60_CNT_SOCIAL_CIRCLE")
-    out["social_default_total"] = (def30.fillna(0) if def30 is not None else 0) + (def60.fillna(0) if def60 is not None else 0)
-    denom = (out["social_obs_total"] + 1.0)
-    out["social_default_ratio"] = out["social_default_total"] / denom
-
-    # ─── behavioural (10% weight) — external scoring sources ───
-    # The three EXT_SOURCE columns are Home Credit's internal/external bureau scores.
-    # Their average is consistently the single most predictive feature in this dataset.
-    for col in ("EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"):
-        if col not in out.columns:
-            out[col] = np.nan
-    out["ext_sources_mean"] = out[["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]].mean(axis=1)
-    out["ext_sources_min"] = out[["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]].min(axis=1)
-    out["ext_sources_max"] = out[["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]].max(axis=1)
-    out["ext_sources_count"] = out[["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]].notna().sum(axis=1)
-
-    # ─── location (supportive) ───
-    if "REGION_RATING_CLIENT_W_CITY" in out.columns:
-        out["region_rating"] = out["REGION_RATING_CLIENT_W_CITY"].astype("Int64")
-    if "REGION_POPULATION_RELATIVE" in out.columns:
-        out["region_population_log"] = np.log1p(out["REGION_POPULATION_RELATIVE"].fillna(0))
-
-    # ─── categoricals: one-hot the small-cardinality ones ───
-    categorical_cols = [
-        "NAME_CONTRACT_TYPE", "CODE_GENDER", "NAME_EDUCATION_TYPE",
-        "NAME_FAMILY_STATUS", "NAME_HOUSING_TYPE", "NAME_INCOME_TYPE",
-    ]
-    categorical_cols = [c for c in categorical_cols if c in out.columns]
-    out = pd.get_dummies(out, columns=categorical_cols, drop_first=True, dummy_na=False)
-
-    print(f"[fe] done: {out.shape[1]} columns")
-    return out
-
-
-def select_feature_columns(df: pd.DataFrame) -> List[str]:
-    """Keep only numeric / boolean columns suitable for LightGBM."""
-    drop = {"SK_ID_CURR", "TARGET"}
-    cols: List[str] = []
-    for c in df.columns:
-        if c in drop:
-            continue
-        dt = df[c].dtype
-        if dt.kind in ("i", "u", "f", "b") or pd.api.types.is_bool_dtype(dt):
-            cols.append(c)
-    print(f"[fe] selected {len(cols)} feature columns for the model")
-    return cols
+# Feature engineering (engineer_features / select_feature_columns) lives in
+# src/features/home_credit_features.py — imported above so training and the
+# live API share one definition.
 
 
 # ─────────────────────────── 3. Models ───────────────────────────────────
@@ -367,6 +292,21 @@ def main() -> int:
     fairness = fairness_summary(df_fe, oof)
     print(f"[fairness] {json.dumps(fairness, indent=2)}")
 
+    # ─── Decision thresholds ───
+    # The model outputs P(default); serving converts to creditworthiness (1-P).
+    # A calibrated model on an 8%-default book produces a narrow creditworthiness
+    # band, so the decision thresholds must come from the actual score
+    # distribution — derived here from the out-of-fold predictions, embedded in
+    # the artifact, and used by predictor.decide_band.
+    oof_creditworthiness = 1.0 - oof
+    decision_thresholds = {
+        # approve the lowest-risk ~45% (top creditworthiness), reject the
+        # highest-risk ~18%, manual_review the rest — a conservative lending policy.
+        "approve": round(float(np.quantile(oof_creditworthiness, 0.55)), 4),
+        "reject": round(float(np.quantile(oof_creditworthiness, 0.18)), 4),
+    }
+    print(f"[thresholds] decision bands (creditworthiness): {decision_thresholds}")
+
     # ─── Production artifact ───
     feature_importance = dict(zip(X.columns, lgbm_model.feature_importance(importance_type="gain")))
     artifact = {
@@ -379,10 +319,10 @@ def main() -> int:
             "trained_at": datetime.utcnow().isoformat(),
             "rows_used": len(X),
             "lightgbm_cv_auc_mean": round(lgbm_cv_auc, 4),
-            "lightgbm_cv_auc_std": round(float(np.std([roc_auc_score(y[i:i+1], oof[i:i+1]) for i in range(0, 0)])) if False else 0.0, 4),
             "logistic_baseline_auc": round(lr_auc, 4),
             "brier_score": round(brier_score_loss(y, oof), 4),
             "positive_rate": round(float(y.mean()), 4),
+            "decision_thresholds": decision_thresholds,
             "fairness_glance": fairness,
             "n_folds": N_FOLDS,
             "random_state": RANDOM_STATE,
