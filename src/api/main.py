@@ -67,6 +67,7 @@ from ..database.repositories import (
     ApplicationStatusRepository,
     UserRepository,
 )
+from ..cache import recent_features as recent_features_cache
 from ..database.connection import get_db, db_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -161,9 +162,11 @@ app.add_middleware(RateLimitMiddleware, requests_limit=100, window_seconds=900)
 # Auth and User routers - Re-enabled
 from .auth import router as auth_router
 from .users import router as users_router
+from .admin import router as admin_router
 
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(admin_router)
 
 
 # Exception handlers - Re-enabled
@@ -603,7 +606,11 @@ async def _run_application_lifecycle(application_db_id: str, public_application_
         # Persist features (numeric only — strip the metadata columns the pipeline
         # tacks on, since extracted_features in the response schema is Dict[str, float])
         metadata_keys = {'application_id', 'user_id'}
-        app.extracted_features = {k: float(v) for k, v in features.items() if k not in metadata_keys}
+        numeric_features = {k: float(v) for k, v in features.items() if k not in metadata_keys}
+        app.extracted_features = numeric_features
+
+        # Feed the drift detector: rolling buffer of recent inputs
+        recent_features_cache.record(numeric_features)
         app.processing_time_ms = result.get('prediction_time_ms', 0.0)
         app.processed_at = datetime.utcnow()
         app.status = DECIDED_STATUS

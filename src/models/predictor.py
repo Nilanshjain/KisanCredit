@@ -50,6 +50,11 @@ class ProfitabilityPredictor:
         self.feature_names: Optional[List[str]] = None
         self.feature_importance: Optional[Dict[str, float]] = None
         self.metadata: Optional[Dict] = None
+        # Per-feature quantile bin edges from the training set, used as the PSI
+        # reference distribution for drift detection. v1 (synthetic) model
+        # doesn't ship with these; v2 (Home Credit) will. None -> /admin/drift
+        # surfaces a "baseline not available" indicator instead of fake PSI.
+        self.feature_quantiles: Optional[Dict[str, List[float]]] = None
 
         if model_path:
             self.load_model(model_path)
@@ -75,6 +80,7 @@ class ProfitabilityPredictor:
         self.feature_names = artifact['feature_names']
         self.feature_importance = artifact.get('feature_importance')
         self.metadata = artifact.get('metadata', {})
+        self.feature_quantiles = artifact.get('feature_quantiles')
 
         load_time = time.time() - start_time
 

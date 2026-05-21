@@ -62,6 +62,9 @@ class User(Base):
 
     # Account status
     is_active = Column(Boolean, default=True, index=True)
+    # Authorization role: 'user' (default applicant) or 'admin' (lender/operator).
+    # Admin role gates /admin/* endpoints and admin-only frontend views.
+    role = Column(String(20), default="user", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

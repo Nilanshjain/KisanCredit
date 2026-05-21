@@ -58,6 +58,18 @@ async def get_current_active_user(
     return current_user
 
 
+async def require_admin(
+    current_user: User = Depends(get_current_active_user)
+) -> User:
+    """Reject non-admin callers with 403. Use as a Depends() on every /admin/* route."""
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required",
+        )
+    return current_user
+
+
 # Optional authentication - doesn't fail if no token provided
 async def get_current_user_optional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
