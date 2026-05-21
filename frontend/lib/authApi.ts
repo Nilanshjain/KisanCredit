@@ -7,7 +7,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/a
 export interface SendOTPResponse {
   success: boolean;
   message: string;
-  phone_number: string;
+  email: string;
   expires_in_minutes: number;
 }
 
@@ -16,14 +16,14 @@ export interface TokenResponse {
   refresh_token: string;
   token_type: string;
   user_id: string;
-  phone_number: string;
+  email: string;
   is_new_user: boolean;
 }
 
 export interface UserProfile {
   user_id: string;
-  phone_number: string;
   email?: string;
+  phone_number?: string;   // optional — email-OTP users have no phone
   full_name?: string;
   date_of_birth?: string;
   address?: string;
@@ -55,50 +55,40 @@ export interface UserApplicationsResponse {
 }
 
 /**
- * Send OTP to phone number
+ * Send a one-time code to an email address.
  */
-export async function sendOTP(phoneNumber: string): Promise<SendOTPResponse> {
+export async function sendOTP(email: string): Promise<SendOTPResponse> {
   const response = await fetch(`${API_BASE_URL}/auth/send-otp`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ phone_number: phoneNumber }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
   });
 
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || 'Failed to send OTP');
   }
-
   return response.json();
 }
 
 /**
- * Verify OTP and login/signup
+ * Verify the emailed OTP and login/signup.
  */
 export async function verifyOTP(
-  phoneNumber: string,
+  email: string,
   otp: string,
-  fullName?: string
+  fullName?: string,
 ): Promise<TokenResponse> {
   const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      phone_number: phoneNumber,
-      otp,
-      full_name: fullName,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp, full_name: fullName }),
   });
 
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || 'Failed to verify OTP');
   }
-
   return response.json();
 }
 

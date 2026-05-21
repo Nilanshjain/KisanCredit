@@ -100,7 +100,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 text-stone-700">
                 <User className="w-5 h-5" />
-                <span className="font-semibold">{user?.full_name || user?.phone_number}</span>
+                <span className="font-semibold">{user?.full_name || user?.email}</span>
               </div>
               <button
                 onClick={handleLogout}

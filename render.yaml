@@ -23,13 +23,11 @@ services:
         sync: false
       - key: CORS_ORIGINS                # https://<your-vercel-app>.vercel.app (comma-separated allowed)
         sync: false
-      # --- optional for later phases (leave unset until ready) ---
-      - key: GEMINI_API_KEY              # Phase 6 — google AI studio
+      # --- optional integrations (unset -> graceful fallback) ---
+      - key: GEMINI_API_KEY              # Phase 6 — aistudio.google.com (LLM explanations)
         sync: false
-      - key: MSG91_AUTH_KEY              # Phase 3 — msg91 dashboard
+      - key: RESEND_API_KEY             # Phase 3b — resend.com (email OTP delivery)
         sync: false
-      - key: MSG91_SENDER_ID             # Phase 3
-        sync: false
-      - key: MSG91_TEMPLATE_ID           # Phase 3
+      - key: RESEND_FROM_EMAIL          # Phase 3b — verified sender, e.g. onboarding@resend.dev
         sync: false
     healthCheckPath: /api/v1/health

@@ -8,11 +8,11 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Card from '@/components/ui/Card'
 import Alert from '@/components/ui/Alert'
-import { Sprout, Phone, KeyRound, ArrowLeft } from 'lucide-react'
+import { Sprout, Mail, KeyRound, ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '@/lib/authStore'
 import { sendOTP, verifyOTP } from '@/lib/authApi'
 
-type Step = 'phone' | 'otp'
+type Step = 'email' | 'otp'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -21,8 +21,8 @@ export default function LoginPage() {
 
   const { setTokens, setUser } = useAuthStore()
 
-  const [step, setStep] = useState<Step>('phone')
-  const [phone, setPhone] = useState('')
+  const [step, setStep] = useState<Step>('email')
+  const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
   const [otp, setOtp] = useState('')
   const [otpExpiresInMin, setOtpExpiresInMin] = useState<number | null>(null)
@@ -30,7 +30,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
 
-  const isValidPhone = (p: string) => /^[6-9]\d{9}$/.test(p)
+  const isValidEmail = (e: string) => /^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(e)
   const isValidOtp = (o: string) => /^\d{6}$/.test(o)
 
   const handleSendOtp = async (e: React.FormEvent) => {
@@ -38,17 +38,17 @@ export default function LoginPage() {
     setError('')
     setInfo('')
 
-    if (!isValidPhone(phone)) {
-      setError('Enter a valid 10-digit Indian mobile number starting with 6-9')
+    if (!isValidEmail(email)) {
+      setError('Enter a valid email address')
       return
     }
 
     setLoading(true)
     try {
-      const res = await sendOTP(phone)
-      setOtpExpiresInMin(res.expires_in_minutes ?? 5)
+      const res = await sendOTP(email)
+      setOtpExpiresInMin(res.expires_in_minutes ?? 10)
       setStep('otp')
-      setInfo('Demo mode: the OTP is printed in the API server logs (Render dashboard or local terminal).')
+      setInfo('Check your inbox for the 6-digit code. In demo mode, the code is also printed in the API server logs.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send OTP')
     } finally {
@@ -67,16 +67,16 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      const tokens = await verifyOTP(phone, otp, fullName || undefined)
+      const tokens = await verifyOTP(email, otp, fullName || undefined)
       setTokens(tokens.access_token, tokens.refresh_token)
       setUser({
         user_id: tokens.user_id,
-        phone_number: tokens.phone_number,
+        email: tokens.email,
         full_name: fullName || undefined,
         kyc_verified: false,
         is_active: true,
         created_at: new Date().toISOString(),
-      } as any)
+      })
       router.push(redirectTo)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to verify OTP')
@@ -99,31 +99,26 @@ export default function LoginPage() {
             <span className="text-2xl font-bold text-stone-900">KisanCredit</span>
           </Link>
           <h1 className="text-3xl font-bold text-stone-900 mb-2">
-            {step === 'phone' ? 'Sign in / Get started' : 'Enter the 6-digit OTP'}
+            {step === 'email' ? 'Sign in / Get started' : 'Enter your code'}
           </h1>
           <p className="text-stone-600">
-            {step === 'phone'
-              ? 'No password needed — we use mobile OTP, the same way users in tier 2-3 cities prefer.'
-              : `Sent to +91 ${phone}. Expires in ${otpExpiresInMin ?? 5} min.`}
+            {step === 'email'
+              ? 'Passwordless sign-in — we email you a one-time code.'
+              : `Sent to ${email}. Expires in ${otpExpiresInMin ?? 10} min.`}
           </p>
         </div>
 
         <Card>
-          <Alert
-            variant="info"
-            message="Demo mode: the OTP is logged in the server console instead of being sent over SMS. Check the Render logs (or your local terminal) to grab it."
-          />
-
           <AnimatePresence mode="wait">
-            {step === 'phone' ? (
+            {step === 'email' ? (
               <motion.form
-                key="phone-step"
+                key="email-step"
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.2 }}
                 onSubmit={handleSendOtp}
-                className="space-y-4 mt-4"
+                className="space-y-4"
               >
                 {error && <Alert variant="error" message={error} />}
 
@@ -137,19 +132,18 @@ export default function LoginPage() {
                 />
 
                 <Input
-                  label="Mobile number"
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                  placeholder="10-digit number, starts with 6-9"
-                  icon={<Phone className="w-5 h-5" />}
-                  inputMode="numeric"
-                  autoComplete="tel"
+                  label="Email address"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  icon={<Mail className="w-5 h-5" />}
+                  autoComplete="email"
                   required
                 />
 
                 <Button type="submit" variant="primary" fullWidth loading={loading}>
-                  Send OTP
+                  Email me a code
                 </Button>
               </motion.form>
             ) : (
@@ -160,13 +154,13 @@ export default function LoginPage() {
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.2 }}
                 onSubmit={handleVerifyOtp}
-                className="space-y-4 mt-4"
+                className="space-y-4"
               >
                 {error && <Alert variant="error" message={error} />}
                 {info && <Alert variant="info" message={info} />}
 
                 <Input
-                  label="6-digit OTP"
+                  label="6-digit code"
                   type="text"
                   value={otp}
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -186,13 +180,13 @@ export default function LoginPage() {
                   variant="ghost"
                   fullWidth
                   onClick={() => {
-                    setStep('phone')
+                    setStep('email')
                     setOtp('')
                     setError('')
                   }}
                   icon={<ArrowLeft className="w-4 h-4" />}
                 >
-                  Use a different number
+                  Use a different email
                 </Button>
               </motion.form>
             )}

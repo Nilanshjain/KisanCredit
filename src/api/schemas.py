@@ -32,8 +32,6 @@ __all__ = [
     "BatchPredictionResponse",
     "FeatureContribution",
     "SimpleLoanApplicationRequest",
-    "SignupRequest",
-    "LoginRequest",
 ]
 
 
@@ -565,62 +563,5 @@ class ApplicationDetailResponse(BaseModel):
         }
 
 
-class SignupRequest(BaseModel):
-    """Request schema for user signup with email and password."""
-    email: str = Field(..., min_length=3, max_length=255, description="User email address")
-    password: str = Field(..., min_length=8, max_length=100, description="User password (min 8 characters)")
-    full_name: str = Field(..., min_length=2, max_length=255, description="User's full name")
-    phone_number: str = Field(..., pattern=r"^[6-9]\d{9}$", description="10-digit Indian mobile number")
-
-    @validator('email')
-    def validate_email(cls, v):
-        """Validate email format."""
-        import re
-        if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', v):
-            raise ValueError('Invalid email format')
-        return v.lower()
-
-    @validator('password')
-    def validate_password(cls, v):
-        """Validate password strength."""
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters long')
-        if not any(c.isupper() for c in v):
-            raise ValueError('Password must contain at least one uppercase letter')
-        if not any(c.islower() for c in v):
-            raise ValueError('Password must contain at least one lowercase letter')
-        if not any(c.isdigit() for c in v):
-            raise ValueError('Password must contain at least one digit')
-        return v
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "email": "rajesh.kumar@example.com",
-                "password": "SecurePass123",
-                "full_name": "Rajesh Kumar",
-                "phone_number": "9876543210"
-            }
-        }
-
-
-class LoginRequest(BaseModel):
-    """Request schema for user login with email and password."""
-    email: str = Field(..., min_length=3, max_length=255, description="User email address")
-    password: str = Field(..., min_length=1, description="User password")
-
-    @validator('email')
-    def validate_email(cls, v):
-        """Validate email format."""
-        import re
-        if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', v):
-            raise ValueError('Invalid email format')
-        return v.lower()
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "email": "rajesh.kumar@example.com",
-                "password": "SecurePass123"
-            }
-        }
+# SignupRequest / LoginRequest (email+password) removed in Phase 3b — the
+# product is OTP-only (passwordless). Auth lives in src/api/auth.py.

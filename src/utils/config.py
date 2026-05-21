@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # LLM — optional in dev (falls back to template explanation), required in prod
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
 
+    # Email OTP via Resend — optional in dev (falls back to console-logged OTP)
+    resend_api_key: str = Field(default="", alias="RESEND_API_KEY")
+    resend_from_email: str = Field(
+        default="KisanCredit <onboarding@resend.dev>", alias="RESEND_FROM_EMAIL"
+    )
+
     class Config:
         """Pydantic config."""
         env_file = ".env"

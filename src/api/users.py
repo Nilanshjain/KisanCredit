@@ -33,6 +33,7 @@ class UserProfileResponse(BaseModel):
     monthly_income: Optional[float]
     kyc_verified: bool
     is_active: bool
+    role: str = "user"            # 'user' | 'admin' — drives the frontend AdminGuard
     created_at: datetime
 
     class Config:
