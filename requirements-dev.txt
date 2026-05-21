@@ -16,3 +16,8 @@ locust==2.17.0
 jupyter==1.0.0
 matplotlib==3.8.2
 seaborn==0.13.0
+
+# Phase 5 — Home Credit retrain (offline / notebook-only; not shipped to Render)
+kaggle==1.6.17                          # dataset download
+optuna==3.5.0                           # LightGBM hyperparameter tuning
+pytorch-tabnet==4.1.0                   # DL comparison baseline (uses your existing torch)

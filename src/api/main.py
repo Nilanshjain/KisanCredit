@@ -74,13 +74,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = get_logger(__name__)
 
 API_VERSION = "1.0.0"
-MODEL_VERSION = "v1-synthetic"  # bumped to v2 once Home Credit model lands
+
+# MODEL_VERSION is assigned at startup from the loaded artifact's metadata
+# (see lifespan handler). Defaults to the legacy synthetic label until then.
+MODEL_VERSION = "v1-synthetic"
 
 # Global instances
 predictor: ProfitabilityPredictor = None
 explainer: ModelExplainer = None
 feature_pipeline: FeatureEngineeringPipeline = None
 app_start_time: float = None
+
+
+def _derive_model_version(p: "ProfitabilityPredictor | None") -> str:
+    """Human-readable version string derived from the loaded artifact's metadata."""
+    if not p or not p.metadata:
+        return "v1-synthetic"
+    ds = p.metadata.get("dataset")
+    if ds == "home-credit-default-risk":
+        auc = p.metadata.get("lightgbm_cv_auc_mean")
+        return f"v2-home-credit-auc={auc}" if auc else "v2-home-credit"
+    return "v1-synthetic"
 
 
 @asynccontextmanager
@@ -107,6 +121,10 @@ async def lifespan(app: FastAPI):
     # SHAP explainer — wires onto the already-loaded model + its feature names
     logger.info("Initializing SHAP explainer...")
     explainer = ModelExplainer(predictor.model, predictor.feature_names)
+
+    # Derive model version from the artifact metadata (v1-synthetic vs v2-home-credit)
+    global MODEL_VERSION
+    MODEL_VERSION = _derive_model_version(predictor)
 
     # Database — connect once at startup; pool is reused per-request via get_db
     logger.info("Connecting to database...")

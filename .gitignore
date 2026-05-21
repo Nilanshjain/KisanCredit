@@ -67,10 +67,12 @@ htmlcov/
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
-# Data — ignore raw/processed/synthetic data files, keep folder structure via .gitkeep
-data/raw/
-data/processed/
-data/synthetic/
+# Data — ignore contents of raw/processed/synthetic, keep folder structure via .gitkeep.
+# Use `dir/**` rather than `dir/` so the !.gitkeep negations actually take effect
+# (a bare-dir ignore short-circuits negation of files inside it).
+data/raw/**
+data/processed/**
+data/synthetic/**
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/synthetic/.gitkeep
