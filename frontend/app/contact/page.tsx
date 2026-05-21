@@ -68,12 +68,11 @@ export default function ContactPage() {
             <p className="mb-4">
               AI-powered alternative credit scoring platform for rural India. Built with FastAPI, LightGBM, Next.js, and deployed on cloud infrastructure.
             </p>
-            <Button
-              onClick={() => window.location.href = '/apply'}
-              className="bg-white text-amber-600 hover:bg-amber-50"
-            >
-              Apply for Loan
-            </Button>
+            <Link href="/apply">
+              <Button className="bg-white text-amber-600 hover:bg-amber-50">
+                Apply for Loan
+              </Button>
+            </Link>
           </Card>
         </div>
       </div>

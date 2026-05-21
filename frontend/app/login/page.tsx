@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { Suspense, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -14,7 +14,7 @@ import { sendOTP, verifyOTP } from '@/lib/authApi'
 
 type Step = 'email' | 'otp'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
   const search = useSearchParams()
   const redirectTo = search.get('redirect') || '/dashboard'
@@ -194,5 +194,16 @@ export default function LoginPage() {
         </Card>
       </motion.div>
     </div>
+  )
+}
+
+// useSearchParams() must sit inside a Suspense boundary or Next 16 bails out
+// of static generation for this route. The fallback renders for the brief
+// moment before the client hydrates the query string.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-stone-50" />}>
+      <LoginForm />
+    </Suspense>
   )
 }
