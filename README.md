@@ -82,10 +82,9 @@ via `kagglehub`).
 A calibrated default model on an 8%-default population outputs a narrow band of
 probabilities, so a fixed cutoff like "approve above 0.6" would approve everyone.
 The three decision bands — approve, manual review, reject — are instead derived
-from the model's own score distribution on the training set (the 45th and 18th
-percentiles) and stored inside the model artifact. That makes the policy
-explicit and auditable: approve the lowest-risk ~45%, send the riskiest ~18% to
-reject, review the rest.
+from percentiles of the model's own score distribution on the training set and
+stored inside the model artifact. That makes the policy explicit and auditable:
+approve the lowest-risk ~45%, send the riskiest ~18% to reject, review the rest.
 
 ### Why LightGBM, and what it was measured against
 
@@ -240,7 +239,7 @@ src/
 frontend/
   app/         landing · login · apply · dashboard · admin/*
   components/  ui kit · AdminGuard · ErrorBoundary · Navbar
-  lib/         api.ts · authApi.ts · authStore.ts
+  lib/         api.ts · authApi.ts · authedFetch.ts · authStore.ts
 scripts/       train_home_credit.py · benchmark_tabnet.py · demo_v2_prediction.py · promote_admin.py
 notebooks/     home_credit_eval.png · home_credit_shap.png
 alembic/       schema migrations
