@@ -93,8 +93,17 @@ Gradient-boosted trees are the standard choice for tabular credit data, but
 "standard" is not a reason on its own. `scripts/benchmark_tabnet.py` trains a
 TabNet classifier — an attention-based deep-learning architecture for tabular
 data, built on PyTorch — on the identical features and identical CV folds, so
-the comparison is fair. LightGBM was kept as the production model; the benchmark
-script records the measured gap.
+the comparison is fair.
+
+| Model | CV ROC-AUC |
+|---|---|
+| LightGBM | **0.6803** |
+| Logistic regression | 0.6578 |
+| TabNet (PyTorch) | 0.6524 |
+
+LightGBM wins, and TabNet doesn't even clear the logistic-regression baseline —
+the usual story for deep learning on tabular data at this scale without heavy
+tuning. The model choice is now backed by a measured gap rather than a convention.
 
 ---
 
