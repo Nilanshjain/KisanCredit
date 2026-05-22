@@ -865,6 +865,20 @@ async def explain_prediction(
             detail=f"Application {application_id} has no stored features to explain"
         )
 
+    # Score + decision come from the persisted prediction — the real
+    # creditworthiness score. The SHAP explainer only supplies the relative
+    # feature contributions; its reconstructed `prediction` is in margin
+    # (log-odds) space, not a 0-1 score, so it must never be shown as one.
+    preds = await PredictionRepository.get_by_application(session, application.id)
+    if not preds:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Application {application_id} has no prediction to explain yet",
+        )
+    latest_pred = preds[0]
+    real_score = float(latest_pred.profitability_score)
+    real_decision = str(latest_pred.decision)
+
     try:
         import pandas as pd
 
@@ -893,17 +907,19 @@ async def explain_prediction(
             for c in explanation['top_contributions']
         ]
         nle = llm_explain_decision(
-            score=float(explanation['prediction']),
-            decision=str(explanation['decision']),
+            score=real_score,
+            decision=real_decision,
             top_features=llm_input,
             language=language,  # type: ignore[arg-type]
         )
 
+        # base_value = the average applicant's creditworthiness (1 - default rate)
+        base_value = round(1.0 - float((predictor.metadata or {}).get('positive_rate', 0.08)), 4)
         return ExplanationResponse(
             application_id=application_id,
-            profitability_score=explanation['prediction'],
-            decision=DecisionEnum(explanation['decision']),
-            base_value=explanation['base_value'],
+            profitability_score=real_score,
+            decision=DecisionEnum(real_decision),
+            base_value=base_value,
             top_contributors=top_contributors,
             explanation_timestamp=datetime.utcnow(),
             natural_language=NaturalLanguageExplanationModel(

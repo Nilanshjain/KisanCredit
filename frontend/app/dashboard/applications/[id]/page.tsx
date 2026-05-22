@@ -284,30 +284,13 @@ export default function ApplicationDetailPage() {
           )}
         </Card>
 
-        {/* Lifecycle timeline */}
-        <Card className="bg-white shadow-lg">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-amber-600" />
-            Lifecycle
-          </h2>
-
-          {timeline.events.length === 0 ? (
-            <p className="text-sm text-gray-500">No status events recorded yet.</p>
-          ) : (
-            <ol className="relative border-l-2 border-amber-200 pl-6 space-y-6">
-              {timeline.events.map((evt, i) => (
-                <TimelineRow key={`${evt.occurred_at}-${i}`} evt={evt} isLast={i === timeline.events.length - 1} />
-              ))}
-            </ol>
-          )}
-        </Card>
-
-        {/* LLM-narrated explanation — only after a decision */}
+        {/* LLM-narrated explanation — sits directly under the decision so the
+            "why" is the first thing the applicant reads after the outcome. */}
         {latestPrediction && (
           <Card className="bg-white shadow-lg">
             <div className="flex items-start justify-between gap-3 mb-3">
               <h2 className="text-xl font-bold flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-600" /> Plain-language explanation
+                <Sparkles className="w-5 h-5 text-amber-600" /> Why this decision
               </h2>
               <div className="inline-flex bg-stone-100 rounded-lg p-0.5">
                 <button
@@ -342,6 +325,24 @@ export default function ApplicationDetailPage() {
             )}
           </Card>
         )}
+
+        {/* Lifecycle timeline */}
+        <Card className="bg-white shadow-lg">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-amber-600" />
+            Lifecycle
+          </h2>
+
+          {timeline.events.length === 0 ? (
+            <p className="text-sm text-gray-500">No status events recorded yet.</p>
+          ) : (
+            <ol className="relative border-l-2 border-amber-200 pl-6 space-y-6">
+              {timeline.events.map((evt, i) => (
+                <TimelineRow key={`${evt.occurred_at}-${i}`} evt={evt} isLast={i === timeline.events.length - 1} />
+              ))}
+            </ol>
+          )}
+        </Card>
 
         {/* Counter-factual "how to improve" card — only when not already approved */}
         {latestPrediction && counterfactual && counterfactual.changes.length > 0 && (

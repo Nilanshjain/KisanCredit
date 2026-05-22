@@ -19,7 +19,9 @@ export default function RootLayout({
       <body style={{ color: '#1C1917', backgroundColor: '#FAFAF9' }}>
         <ErrorBoundary>
           <Navbar />
-          {children}
+          {/* The navbar is fixed and 64px tall (h-16); pt-16 keeps every
+              page's content from rendering underneath it. */}
+          <main className="pt-16">{children}</main>
         </ErrorBoundary>
       </body>
     </html>

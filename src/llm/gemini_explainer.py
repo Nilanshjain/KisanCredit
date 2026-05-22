@@ -122,38 +122,134 @@ class NaturalLanguageExplanation:
 
 _DECISION_TONE = {
     "approve": {"en": "approved", "hi": "स्वीकृत"},
-    "reject": {"en": "not approved at this time", "hi": "अभी स्वीकृत नहीं"},
-    "manual_review": {"en": "flagged for manual review", "hi": "मैन्युअल समीक्षा हेतु चिह्नित"},
+    "reject": {"en": "not approved", "hi": "अस्वीकृत"},
+    "manual_review": {"en": "sent for manual review", "hi": "मैन्युअल समीक्षा हेतु भेजा गया"},
 }
+
+# Human-readable labels for the v2 model's features, so explanations never
+# surface raw column names like "NAME_EDUCATION_TYPE_Incomplete higher".
+_FEATURE_LABELS: Dict[str, Dict[str, str]] = {
+    "AMT_INCOME_TOTAL":         {"en": "total income",                          "hi": "कुल आय"},
+    "AMT_CREDIT":               {"en": "the requested loan amount",             "hi": "ऋण राशि"},
+    "AMT_ANNUITY":              {"en": "the repayment instalment",              "hi": "मासिक किस्त"},
+    "AMT_GOODS_PRICE":          {"en": "the loan's value",                      "hi": "ऋण का मूल्य"},
+    "CNT_CHILDREN":             {"en": "number of children",                    "hi": "बच्चों की संख्या"},
+    "CNT_FAM_MEMBERS":          {"en": "household size",                        "hi": "परिवार का आकार"},
+    "DAYS_BIRTH":               {"en": "age",                                   "hi": "आयु"},
+    "DAYS_EMPLOYED":            {"en": "time in employment",                    "hi": "नौकरी की अवधि"},
+    "FLAG_OWN_CAR":             {"en": "car ownership",                         "hi": "वाहन स्वामित्व"},
+    "FLAG_OWN_REALTY":          {"en": "property ownership",                    "hi": "संपत्ति का स्वामित्व"},
+    "income_monthly_avg":       {"en": "monthly income",                        "hi": "मासिक आय"},
+    "income_to_credit_ratio":   {"en": "income measured against the loan size", "hi": "ऋण की तुलना में आय"},
+    "income_to_annuity_ratio":  {"en": "income measured against the repayments","hi": "किस्तों की तुलना में आय"},
+    "income_per_family_member": {"en": "income per household member",           "hi": "प्रति सदस्य आय"},
+    "income_log":               {"en": "income level",                          "hi": "आय स्तर"},
+    "annuity_to_income_ratio":  {"en": "the repayment burden",                  "hi": "किस्त का बोझ"},
+    "credit_to_goods_ratio":    {"en": "the loan-to-value ratio",               "hi": "ऋण-मूल्य अनुपात"},
+    "credit_log":               {"en": "the loan size",                         "hi": "ऋण का आकार"},
+    "days_employed_safe":       {"en": "employment length",                     "hi": "रोज़गार अवधि"},
+    "days_birth_years":         {"en": "age",                                   "hi": "आयु"},
+    "employment_ratio":         {"en": "employment stability",                  "hi": "रोज़गार स्थिरता"},
+}
+
+_FEATURE_LABEL_PREFIXES: Dict[str, Dict[str, str]] = {
+    "NAME_EDUCATION_TYPE_": {"en": "education level",   "hi": "शिक्षा स्तर"},
+    "NAME_HOUSING_TYPE_":   {"en": "housing situation", "hi": "आवास स्थिति"},
+    "NAME_INCOME_TYPE_":    {"en": "employment type",   "hi": "रोज़गार का प्रकार"},
+    "CODE_GENDER_":         {"en": "applicant profile", "hi": "आवेदक प्रोफ़ाइल"},
+}
+
+
+def _humanize_feature(name: str, language: Language = "en") -> str:
+    """Raw model feature name -> a label a borrower would understand."""
+    if name in _FEATURE_LABELS:
+        return _FEATURE_LABELS[name][language]
+    for prefix, label in _FEATURE_LABEL_PREFIXES.items():
+        if name.startswith(prefix):
+            return label[language]
+    return name.replace("_", " ").lower()
+
+
+def _distinct_labels(features: List[Dict], language: Language, limit: int = 2) -> List[str]:
+    """Humanized, de-duplicated labels — one-hot dummies of the same field
+    (e.g. two NAME_EDUCATION_TYPE_* columns) collapse to a single label."""
+    out: List[str] = []
+    for f in features:
+        label = _humanize_feature(str(f.get("feature", "")), language)
+        if label and label not in out:
+            out.append(label)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _join(items: List[str], language: Language) -> str:
+    """Grammatical list join: 'a', 'a and b', 'a, b and c'."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    conj = " और " if language == "hi" else " and "
+    return ", ".join(items[:-1]) + conj + items[-1]
+
+
+def _cap(s: str) -> str:
+    return s[:1].upper() + s[1:] if s else s
 
 
 def _template_explanation(
     score: float, decision: str, top_features: List[Dict], language: Language,
 ) -> NaturalLanguageExplanation:
-    """Deterministic, no-LLM fallback that still references the actual SHAP factors."""
+    """Deterministic, no-LLM fallback — a short narrative built from the SHAP
+    factors. Used when no Gemini key is configured or the LLM call fails."""
     tone = _DECISION_TONE.get(decision, _DECISION_TONE["manual_review"])[language]
-    score_pct = round(score * 100, 1)
+    score_pct = round(max(0.0, min(score, 1.0)) * 100)
+    approved = decision == "approve"
 
-    positives = [f for f in top_features if f.get("contribution", 0.0) > 0][:2]
-    negatives = [f for f in top_features if f.get("contribution", 0.0) < 0][:2]
-
-    def _name(feat: Dict) -> str:
-        return str(feat.get("feature", "factor")).replace("_", " ")
+    positives = _distinct_labels(
+        [f for f in top_features if f.get("contribution", 0.0) > 0], language)
+    negatives = _distinct_labels(
+        [f for f in top_features if f.get("contribution", 0.0) < 0], language)
 
     if language == "hi":
-        text = f"आपका आवेदन {tone} किया गया है (स्कोर {score_pct}%)।"
-        if positives:
-            text += " सबसे मजबूत सकारात्मक कारक: " + ", ".join(_name(f) for f in positives) + "।"
-        if negatives:
-            text += " सबसे कमजोर पहलू: " + ", ".join(_name(f) for f in negatives) + "।"
-        suggestion = "मासिक आय बढ़ाने या बचत अनुपात सुधारने पर विचार करें।" if decision != "approve" else "आपका वित्तीय अनुशासन अच्छा है।"
+        if approved:
+            text = (f"शुभ समाचार — आपका ऋण आवेदन {tone} कर दिया गया है। "
+                    f"आपका साख-स्कोर {score_pct}% है।")
+            if positives:
+                text += f" आपके पक्ष में सबसे अधिक {_join(positives, 'hi')} रहा।"
+            if negatives:
+                text += f" {_join(negatives, 'hi')} का प्रभाव थोड़ा कम रहा, पर इससे निर्णय नहीं बदला।"
+            suggestion = "आपकी प्रोफ़ाइल मज़बूत है — आय स्थिर रखें और ऋण उसी अनुपात में लें।"
+        else:
+            text = f"आपका आवेदन {tone} है। आपका साख-स्कोर {score_pct}% है।"
+            if negatives:
+                text += f" मुख्य रूप से {_join(negatives, 'hi')} ने स्कोर को सीमित किया।"
+            if positives:
+                text += f" {_join(positives, 'hi')} आपके पक्ष में रहा।"
+            suggestion = "भविष्य के आवेदन के लिए अपनी आय के अनुरूप कम राशि का अनुरोध करें, या आय बढ़ने पर पुनः आवेदन करें।"
     else:
-        text = f"Your application is {tone} (score {score_pct}%)."
-        if positives:
-            text += " Strongest positive factors: " + ", ".join(_name(f) for f in positives) + "."
-        if negatives:
-            text += " Weakest aspects: " + ", ".join(_name(f) for f in negatives) + "."
-        suggestion = "Consider raising monthly income or improving savings ratio." if decision != "approve" else "Your financial discipline is strong."
+        if approved:
+            text = (f"Good news — your loan application has been {tone}. "
+                    f"Your creditworthiness score is {score_pct}%.")
+            if positives:
+                noun = "factor" if len(positives) == 1 else "factors"
+                verb = "was" if len(positives) == 1 else "were"
+                text += f" The strongest {noun} in your favour {verb} {_join(positives, 'en')}."
+            if negatives:
+                text += (f" {_cap(_join(negatives, 'en'))} counted for a little less, "
+                         f"though not enough to change the outcome.")
+            suggestion = ("Your profile is in good standing — keeping your income steady and "
+                          "your borrowing in proportion to it will keep future applications strong.")
+        else:
+            text = f"Your application has been {tone}. Your creditworthiness score is {score_pct}%."
+            if negatives:
+                noun = "factor" if len(negatives) == 1 else "factors"
+                verb = "was" if len(negatives) == 1 else "were"
+                text += f" The main {noun} limiting the score {verb} {_join(negatives, 'en')}."
+            if positives:
+                text += f" {_cap(_join(positives, 'en'))} counted in your favour."
+            suggestion = ("To strengthen a future application, consider requesting an amount "
+                          "better matched to your income, or reapplying once your earnings are higher.")
 
     return NaturalLanguageExplanation(
         text=text, suggestion=suggestion, language=language, source="template",
@@ -216,11 +312,19 @@ _PROMPT_CF_HI = """आप एक ऋण आवेदक को उनके क�
 """
 
 
+def _fmt_num(x: Any) -> str:
+    """Format a numeric amount with thousands separators."""
+    try:
+        return f"{int(round(float(x))):,}"
+    except (TypeError, ValueError):
+        return str(x)
+
+
 def _format_factors(top_features: List[Dict]) -> str:
     """Render the SHAP top-contributors list as a bullet block for the prompt."""
     lines: List[str] = []
     for f in top_features[:6]:
-        feat = str(f.get("feature", "factor")).replace("_", " ")
+        feat = _humanize_feature(str(f.get("feature", "factor")))
         contrib = float(f.get("contribution", 0.0))
         sign = "+" if contrib >= 0 else "-"
         lines.append(f"- {feat}: contribution {sign}{abs(contrib):.3f}")
@@ -230,12 +334,12 @@ def _format_factors(top_features: List[Dict]) -> str:
 def _format_changes(changes: List[Dict]) -> str:
     lines: List[str] = []
     for c in changes:
-        feat = str(c.get("feature", "factor")).replace("_", " ")
-        cur = c.get("current")
-        sug = c.get("suggested")
+        label = c.get("display_label") or _humanize_feature(str(c.get("feature", "factor")))
+        unit = c.get("display_unit", "")
+        cur, sug = _fmt_num(c.get("current")), _fmt_num(c.get("suggested"))
         delta = c.get("delta_score")
         delta_str = f"+{delta:.3f}" if delta is not None else ""
-        lines.append(f"- {feat}: change from {cur} to {sug} (score impact {delta_str})")
+        lines.append(f"- {label}: from {unit}{cur} to {unit}{sug} (score impact {delta_str})")
     return "\n".join(lines) if lines else "- (no changes suggested)"
 
 
@@ -327,9 +431,10 @@ def narrate_counterfactual(
         # Template fallback: just join the first two changes
         bits = []
         for c in changes[:2]:
-            feat = str(c.get("feature", "factor")).replace("_", " ")
-            bits.append(f"raise {feat} from {c.get('current')} to {c.get('suggested')}")
-        text = "To improve your decision, " + ", and ".join(bits) + "."
+            label = (c.get("display_label") or "a factor").lower()
+            unit = c.get("display_unit", "")
+            bits.append(f"{label} from {unit}{_fmt_num(c.get('current'))} to {unit}{_fmt_num(c.get('suggested'))}")
+        text = "To move your application toward approval, consider adjusting " + _join(bits, "en") + "."
         return NaturalLanguageExplanation(text=text, language=language, source="template")
 
     prompt = (_PROMPT_CF_HI if language == "hi" else _PROMPT_CF_EN).format(
@@ -346,9 +451,10 @@ def narrate_counterfactual(
         logger.warning(f"Gemini counter-factual call failed: {e}")
         bits = []
         for c in changes[:2]:
-            feat = str(c.get("feature", "factor")).replace("_", " ")
-            bits.append(f"raise {feat} from {c.get('current')} to {c.get('suggested')}")
-        text = "To improve your decision, " + ", and ".join(bits) + "."
+            label = (c.get("display_label") or "a factor").lower()
+            unit = c.get("display_unit", "")
+            bits.append(f"{label} from {unit}{_fmt_num(c.get('current'))} to {unit}{_fmt_num(c.get('suggested'))}")
+        text = "To move your application toward approval, consider adjusting " + _join(bits, "en") + "."
         return NaturalLanguageExplanation(text=text, language=language, source="template")
 
 
