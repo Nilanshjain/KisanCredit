@@ -58,7 +58,7 @@ export default function DashboardPage() {
 
       try {
         setIsLoading(true)
-        const response = await getUserApplications(accessToken, statusFilter || undefined)
+        const response = await getUserApplications(statusFilter || undefined)
         setApplications(response.applications)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load applications')

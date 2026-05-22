@@ -45,7 +45,7 @@ export default function AdminGuard({ children }: Props) {
 
       // No role on the cached user — fetch /users/me once to populate
       try {
-        const fresh = await getCurrentUser(accessToken)
+        const fresh = await getCurrentUser()
         if (cancelled) return
         setUser(fresh)
         if (fresh.role !== 'admin') {

@@ -7,6 +7,7 @@
  */
 
 import { useAuthStore } from './authStore';
+import { authedFetch } from './authedFetch';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -74,11 +75,6 @@ export function getAccessToken(): string | null {
   return useAuthStore.getState().accessToken;
 }
 
-function authHeader(): Record<string, string> {
-  const token = getAccessToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 /**
  * Submit a loan application via the simplified form endpoint.
  *
@@ -108,9 +104,9 @@ export async function submitApplication(data: LoanApplicationData): Promise<Appl
     owns_property: data.ownsProperty,
   };
 
-  const response = await fetch(`${API_BASE_URL}/applications/simple`, {
+  const response = await authedFetch(`${API_BASE_URL}/applications/simple`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
@@ -202,9 +198,7 @@ export interface AdminDriftResponse {
 }
 
 async function adminGet<T>(path: string): Promise<T> {
-  const r = await fetch(`${API_BASE_URL}/admin${path}`, {
-    headers: { ...authHeader() }, cache: 'no-store',
-  });
+  const r = await authedFetch(`${API_BASE_URL}/admin${path}`, { cache: 'no-store' });
   if (!r.ok) {
     if (r.status === 403) throw new Error('Admin role required.');
     const err = await r.json().catch(() => ({}));
@@ -228,11 +222,11 @@ export const fetchAdminDrift = () => adminGet<AdminDriftResponse>('/drift');
 export async function adminOverrideDecision(
   applicationId: string, decision: 'approve' | 'reject' | 'manual_review', reason: string,
 ): Promise<{ application_id: string; new_status: string; overridden_decision: string; occurred_at: string }> {
-  const r = await fetch(
+  const r = await authedFetch(
     `${API_BASE_URL}/admin/applications/${encodeURIComponent(applicationId)}/override`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision, reason }),
     },
   );
@@ -246,9 +240,9 @@ export async function adminOverrideDecision(
 // ────────────────────────────────────────────────────────────────────────
 
 export async function fetchTimeline(applicationId: string): Promise<ApplicationTimelineResponse> {
-  const response = await fetch(
+  const response = await authedFetch(
     `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/timeline`,
-    { headers: { ...authHeader() }, cache: 'no-store' },
+    { cache: 'no-store' },
   );
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -317,9 +311,9 @@ export interface CounterfactualResult {
 }
 
 export async function fetchExplanation(applicationId: string, language: 'en' | 'hi' = 'en'): Promise<ApplicationExplanation> {
-  const r = await fetch(
+  const r = await authedFetch(
     `${API_BASE_URL}/predictions/${encodeURIComponent(applicationId)}/explain?language=${language}`,
-    { headers: { ...authHeader() }, cache: 'no-store' },
+    { cache: 'no-store' },
   );
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
@@ -329,9 +323,9 @@ export async function fetchExplanation(applicationId: string, language: 'en' | '
 }
 
 export async function fetchCounterfactual(applicationId: string, language: 'en' | 'hi' = 'en'): Promise<CounterfactualResult> {
-  const r = await fetch(
+  const r = await authedFetch(
     `${API_BASE_URL}/predictions/${encodeURIComponent(applicationId)}/counterfactual?language=${language}`,
-    { headers: { ...authHeader() }, cache: 'no-store' },
+    { cache: 'no-store' },
   );
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));

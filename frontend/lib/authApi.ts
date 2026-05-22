@@ -2,6 +2,8 @@
  * Authentication API client for KisanCredit
  */
 
+import { authedFetch } from './authedFetch';
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 export interface SendOTPResponse {
@@ -145,68 +147,45 @@ export async function logout(accessToken: string): Promise<void> {
 }
 
 /**
- * Get current user profile
+ * Get current user profile. Token handling (including refresh-on-401) lives
+ * in authedFetch.
  */
-export async function getCurrentUser(accessToken: string): Promise<UserProfile> {
-  const response = await fetch(`${API_BASE_URL}/users/me`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-    },
-  });
-
+export async function getCurrentUser(): Promise<UserProfile> {
+  const response = await authedFetch(`${API_BASE_URL}/users/me`, { method: 'GET' });
   if (!response.ok) {
     throw new Error('Failed to fetch user profile');
   }
-
   return response.json();
 }
 
 /**
  * Update user profile
  */
-export async function updateUserProfile(
-  accessToken: string,
-  data: Partial<UserProfile>
-): Promise<UserProfile> {
-  const response = await fetch(`${API_BASE_URL}/users/me`, {
+export async function updateUserProfile(data: Partial<UserProfile>): Promise<UserProfile> {
+  const response = await authedFetch(`${API_BASE_URL}/users/me`, {
     method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-
   if (!response.ok) {
     throw new Error('Failed to update profile');
   }
-
   return response.json();
 }
 
 /**
- * Get user's loan applications
+ * Get the signed-in user's loan applications.
  */
 export async function getUserApplications(
-  accessToken: string,
   statusFilter?: string
 ): Promise<UserApplicationsResponse> {
   const url = new URL(`${API_BASE_URL}/users/me/applications`);
   if (statusFilter) {
     url.searchParams.set('status_filter', statusFilter);
   }
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-    },
-  });
-
+  const response = await authedFetch(url.toString(), { method: 'GET' });
   if (!response.ok) {
     throw new Error('Failed to fetch applications');
   }
-
   return response.json();
 }

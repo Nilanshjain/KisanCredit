@@ -52,15 +52,19 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             className={cn(
               'input',
               error && 'input-error',
-              icon && iconPosition === 'left' && 'pl-12',
-              icon && iconPosition === 'right' && 'pr-12',
               className
             )}
+            // Padding is set inline, not via Tailwind's pl-12/pr-12 utilities:
+            // the unlayered `.input` rule in globals.css carries a `padding`
+            // shorthand that outranks layered utility classes, so the icon
+            // would otherwise overlap the text. Inline styles win the cascade.
             style={{
               color: '#1C1917',
               backgroundColor: '#FFFFFF',
               WebkitTextFillColor: '#1C1917',
               caretColor: '#1C1917',
+              ...(icon && iconPosition === 'left' ? { paddingLeft: '3rem' } : {}),
+              ...((error || (icon && iconPosition === 'right')) ? { paddingRight: '3rem' } : {}),
               ...props.style
             }}
             autoComplete={props.autoComplete || 'off'}
