@@ -10,7 +10,7 @@ import Card from '@/components/ui/Card'
 import Alert from '@/components/ui/Alert'
 import { Sprout, Mail, KeyRound, ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '@/lib/authStore'
-import { sendOTP, verifyOTP } from '@/lib/authApi'
+import { sendOTP, verifyOTP, getCurrentUser } from '@/lib/authApi'
 
 type Step = 'email' | 'otp'
 
@@ -75,15 +75,30 @@ function LoginForm() {
     try {
       const tokens = await verifyOTP(email, otp, fullName || undefined)
       setTokens(tokens.access_token, tokens.refresh_token)
-      setUser({
-        user_id: tokens.user_id,
-        email: tokens.email,
-        full_name: fullName || undefined,
-        kyc_verified: false,
-        is_active: true,
-        created_at: new Date().toISOString(),
-      })
-      router.push(redirectTo)
+
+      // Fetch the full profile (including role) so the app knows whether this
+      // is a borrower or a lender/operator account.
+      let role: 'user' | 'admin' = 'user'
+      try {
+        const profile = await getCurrentUser()
+        setUser(profile)
+        role = profile.role === 'admin' ? 'admin' : 'user'
+      } catch {
+        // Profile fetch failed — fall back to a minimal user object.
+        setUser({
+          user_id: tokens.user_id,
+          email: tokens.email,
+          full_name: fullName || undefined,
+          kyc_verified: false,
+          is_active: true,
+          created_at: new Date().toISOString(),
+        })
+      }
+
+      // Operators land on the operator console; a borrower (or an explicit
+      // ?redirect= sent here from a protected page) goes to its target.
+      const dest = role === 'admin' && redirectTo === '/dashboard' ? '/admin' : redirectTo
+      router.push(dest)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to verify OTP')
     } finally {

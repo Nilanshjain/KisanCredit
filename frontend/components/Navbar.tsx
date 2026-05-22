@@ -5,12 +5,13 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Button from './ui/Button'
-import { Sprout, LogOut } from 'lucide-react'
+import { Sprout, LogOut, LayoutDashboard, Building2 } from 'lucide-react'
 import { useAuthStore } from '@/lib/authStore'
 
 export default function Navbar() {
   const router = useRouter()
-  const { isAuthenticated, logout } = useAuthStore()
+  const { isAuthenticated, logout, user } = useAuthStore()
+  const isAdmin = user?.role === 'admin'
 
   const handleLogout = () => {
     logout()
@@ -38,9 +39,17 @@ export default function Navbar() {
           <div className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
-                <Link href="/dashboard">
-                  <Button variant="ghost" size="sm">
-                    Dashboard
+                {/* Operators land on the lender console; borrowers on their
+                    own application dashboard. */}
+                <Link href={isAdmin ? '/admin' : '/dashboard'}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={isAdmin
+                      ? <Building2 className="w-4 h-4" />
+                      : <LayoutDashboard className="w-4 h-4" />}
+                  >
+                    {isAdmin ? 'Operator console' : 'Dashboard'}
                   </Button>
                 </Link>
                 <Button
