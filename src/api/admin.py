@@ -51,7 +51,13 @@ class DecisionCount(BaseModel):
 
 
 class AdminMetricsOverview(BaseModel):
-    """Top-line operator KPIs over the last 24 hours."""
+    """Top-line operator KPIs over the last 24 hours.
+
+    Model-performance fields (total_predictions, avg_score, avg_confidence,
+    avg_latency_ms, p95_latency_ms, decisions, score_histogram) reflect only
+    real model predictions — admin overrides are tracked separately below so
+    a high override rate doesn't masquerade as model behaviour.
+    """
     window_hours: int = 24
     total_predictions: int
     avg_score: float
@@ -60,7 +66,12 @@ class AdminMetricsOverview(BaseModel):
     p95_latency_ms: float
     decisions: List[DecisionCount]
     score_histogram: List[ScoreBucket]
+    # Operator activity — separated from model metrics
+    override_count: int                        # admin-override predictions in window
+    override_decisions: List[DecisionCount]    # breakdown of what operators decided
+    # NOT window-bound: a NOW snapshot of pipeline state
     pending_review_count: int                  # applications stuck in submitted/under_review
+    errored_count: int                         # applications in 'rejected' state with no prediction (inference errors)
     recent_buffer_size: int                    # drift detector buffer
     drift_baseline_available: bool
 
@@ -159,28 +170,38 @@ async def admin_metrics_overview(
 
     since = datetime.utcnow() - timedelta(hours=window_hours)
 
-    # Total + averages from the predictions table
+    # Model-perf metrics exclude admin overrides — overrides write synthetic
+    # rows with score=1.0/0.5/0.0, conf=1.0, latency=0.0 that would otherwise
+    # distort avg_score, avg_confidence, the P95, the decision counts, and the
+    # histogram. Operator activity is reported separately further down.
+    OVERRIDE_TAG = "admin-override"
+    model_only = (
+        (Prediction.prediction_timestamp >= since)
+        & (Prediction.model_version != OVERRIDE_TAG)
+    )
+
+    # Total + averages from the predictions table (model predictions only)
     totals = await session.execute(
         select(
             func.count(Prediction.id),
             func.avg(Prediction.profitability_score),
             func.avg(Prediction.confidence),
             func.avg(Prediction.prediction_latency_ms),
-        ).where(Prediction.prediction_timestamp >= since)
+        ).where(model_only)
     )
     total, avg_score, avg_conf, avg_lat = totals.one()
 
     # P95 latency: percentile_cont is portable across PG versions
     p95_row = await session.execute(
         select(func.percentile_cont(0.95).within_group(Prediction.prediction_latency_ms))
-        .where(Prediction.prediction_timestamp >= since)
+        .where(model_only)
     )
     p95_lat = p95_row.scalar()
 
-    # Decision breakdown
+    # Model decision breakdown (overrides excluded)
     decisions_q = await session.execute(
         select(Prediction.decision, func.count(Prediction.id))
-        .where(Prediction.prediction_timestamp >= since)
+        .where(model_only)
         .group_by(Prediction.decision)
     )
     decisions = [DecisionCount(decision=row[0], count=row[1]) for row in decisions_q.all()]
@@ -188,7 +209,7 @@ async def admin_metrics_overview(
     # Score histogram (10 bins, 0.0-1.0). Done in Python over the recent set —
     # at <10K predictions this is cheap and avoids DB-vendor-specific bucketing.
     scores_q = await session.execute(
-        select(Prediction.profitability_score).where(Prediction.prediction_timestamp >= since)
+        select(Prediction.profitability_score).where(model_only)
     )
     scores = [float(r[0]) for r in scores_q.all()]
     histogram: List[ScoreBucket] = []
@@ -198,13 +219,35 @@ async def admin_metrics_overview(
         count = sum(1 for s in scores if (lo <= s < hi) or (i == 9 and s == 1.0))
         histogram.append(ScoreBucket(range_low=round(lo, 1), range_high=round(hi, 1), count=count))
 
-    # Pending review = anything not in a terminal status
+    # Operator overrides — same window, counted on their own
+    override_only = (
+        (Prediction.prediction_timestamp >= since)
+        & (Prediction.model_version == OVERRIDE_TAG)
+    )
+    override_total_row = await session.execute(
+        select(func.count(Prediction.id)).where(override_only)
+    )
+    override_count = override_total_row.scalar() or 0
+    override_decisions_q = await session.execute(
+        select(Prediction.decision, func.count(Prediction.id))
+        .where(override_only)
+        .group_by(Prediction.decision)
+    )
+    override_decisions = [
+        DecisionCount(decision=row[0], count=row[1]) for row in override_decisions_q.all()
+    ]
+
+    # NOT window-bound — these are NOW snapshots of pipeline state.
     pending_q = await session.execute(
         select(func.count(Application.id)).where(
             Application.status.in_(["submitted", "under_review"])
         )
     )
     pending = pending_q.scalar() or 0
+    errored_q = await session.execute(
+        select(func.count(Application.id)).where(Application.status == "rejected")
+    )
+    errored = errored_q.scalar() or 0
 
     return AdminMetricsOverview(
         window_hours=window_hours,
@@ -215,7 +258,10 @@ async def admin_metrics_overview(
         p95_latency_ms=round(float(p95_lat or 0.0), 2),
         decisions=decisions,
         score_histogram=histogram,
+        override_count=override_count,
+        override_decisions=override_decisions,
         pending_review_count=pending,
+        errored_count=errored,
         recent_buffer_size=recent_features_cache.size(),
         drift_baseline_available=bool(predictor and predictor.feature_quantiles),
     )
