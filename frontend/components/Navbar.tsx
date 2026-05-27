@@ -3,7 +3,6 @@
 import React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
 import Button from './ui/Button'
 import { Sprout, LogOut, LayoutDashboard, Building2 } from 'lucide-react'
 import { useAuthStore } from '@/lib/authStore'
@@ -19,28 +18,19 @@ export default function Navbar() {
   }
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-stone-200">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 group">
-            <motion.div
-              whileHover={{ rotate: 360 }}
-              transition={{ duration: 0.5 }}
-            >
-              <Sprout className="w-8 h-8 text-field-600" />
-            </motion.div>
-            <span className="text-xl font-bold text-stone-900">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/85 backdrop-blur-md border-b hairline">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="flex items-center justify-between h-14">
+          <Link href="/" className="flex items-center gap-2">
+            <Sprout className="w-5 h-5 text-harvest-600" strokeWidth={2.25} />
+            <span className="text-sm font-semibold text-stone-900 tracking-tight">
               KisanCredit
             </span>
           </Link>
 
-          {/* Auth Buttons */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {isAuthenticated ? (
               <>
-                {/* Operators land on the lender console; borrowers on their
-                    own application dashboard. */}
                 <Link href={isAdmin ? '/admin' : '/dashboard'}>
                   <Button
                     variant="ghost"
@@ -53,7 +43,7 @@ export default function Navbar() {
                   </Button>
                 </Link>
                 <Button
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
                   onClick={handleLogout}
                   icon={<LogOut className="w-4 h-4" />}
@@ -64,7 +54,7 @@ export default function Navbar() {
             ) : (
               <Link href="/login">
                 <Button variant="primary" size="sm">
-                  Sign in / Get started
+                  Sign in
                 </Button>
               </Link>
             )}

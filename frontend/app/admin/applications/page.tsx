@@ -2,19 +2,27 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Card, Badge, Alert, Skeleton, Button } from '@/components/ui'
 import { fetchAdminApplications, type AdminApplicationSummary } from '@/lib/api'
-import { RefreshCw, ChevronRight, ChevronLeft } from 'lucide-react'
+import { RefreshCw, ChevronRight, ChevronLeft, Loader2 } from 'lucide-react'
 
 const PAGE_SIZE = 50
 
 const STATUS_TABS = [
-  { key: '', label: 'All' },
+  { key: '',             label: 'All'          },
   { key: 'under_review', label: 'Under review' },
-  { key: 'submitted', label: 'Submitted' },
-  { key: 'decided', label: 'Decided' },
-  { key: 'rejected', label: 'Rejected' },
+  { key: 'submitted',    label: 'Submitted'    },
+  { key: 'decided',      label: 'Decided'      },
+  { key: 'rejected',     label: 'Rejected'     },
 ]
+
+const STATUS_DOT: Record<string, string> = {
+  submitted:    'bg-stone-400',
+  under_review: 'bg-harvest-500',
+  decided:      'bg-stone-900',
+  approved:     'bg-field-600',
+  rejected:     'bg-clay-600',
+  disbursed:    'bg-field-600',
+}
 
 export default function AdminApplicationsListPage() {
   const [items, setItems] = useState<AdminApplicationSummary[]>([])
@@ -41,23 +49,31 @@ export default function AdminApplicationsListPage() {
   useEffect(() => { load() }, [statusFilter, offset]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-stone-900">Applications queue</h1>
-        <Button variant="ghost" size="sm" onClick={() => load()} icon={<RefreshCw className="w-4 h-4" />}>
-          Refresh
-        </Button>
-      </div>
+    <div className="space-y-8">
+      <header className="flex items-end justify-between gap-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-stone-900 tracking-tight">Applications</h1>
+          <p className="mt-1 text-sm text-stone-500">
+            {total.toLocaleString()} total
+          </p>
+        </div>
+        <button
+          onClick={() => load()}
+          className="text-sm text-stone-500 hover:text-stone-900 inline-flex items-center gap-1.5"
+        >
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+        </button>
+      </header>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {STATUS_TABS.map(t => (
           <button
             key={t.key || 'all'}
             onClick={() => { setStatusFilter(t.key); setOffset(0) }}
-            className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               statusFilter === t.key
                 ? 'bg-stone-900 text-white'
-                : 'bg-white text-stone-700 hover:bg-stone-100 border border-stone-200'
+                : 'bg-white text-stone-600 hover:text-stone-900 border hairline'
             }`}
           >
             {t.label}
@@ -66,48 +82,70 @@ export default function AdminApplicationsListPage() {
       </div>
 
       {loading ? (
-        <Skeleton className="h-96 w-full" />
+        <div className="flex items-center gap-2 text-sm text-stone-500 py-16 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
       ) : error ? (
-        <Alert variant="error" message={error} />
+        <div className="rounded-md bg-clay-50 border hairline border-clay-200 p-4 text-sm text-clay-700">
+          {error}
+        </div>
       ) : items.length === 0 ? (
-        <Card className="text-center py-12 text-stone-500">No applications match this filter.</Card>
+        <div className="text-center py-16 border hairline rounded-xl bg-white text-stone-500 text-sm">
+          No applications match this filter.
+        </div>
       ) : (
-        <Card className="bg-white shadow-soft overflow-hidden p-0">
+        <div className="rounded-xl border hairline bg-white overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-stone-50 text-xs uppercase tracking-wide text-stone-500">
+            <thead className="bg-stone-50 text-xs uppercase tracking-wider text-stone-500">
               <tr>
-                <Th>Application ID</Th>
-                <Th>Phone</Th>
-                <Th align="right">Loan ₹</Th>
-                <Th>Purpose</Th>
+                <Th>Application</Th>
                 <Th>Status</Th>
                 <Th>Decision</Th>
                 <Th align="right">Score</Th>
+                <Th align="right">Loan ₹</Th>
                 <Th>Submitted</Th>
                 <Th />
               </tr>
             </thead>
-            <tbody className="divide-y divide-stone-100">
+            <tbody className="divide-y hairline">
               {items.map(a => (
-                <tr key={a.application_id} className="hover:bg-stone-50">
-                  <Td><span className="font-mono text-xs">{a.application_id}</span></Td>
-                  <Td>{a.user_phone || '—'}</Td>
-                  <Td align="right">{a.loan_amount.toLocaleString('en-IN')}</Td>
-                  <Td>{a.loan_purpose}</Td>
-                  <Td><StatusBadge status={a.status} /></Td>
+                <tr key={a.application_id} className="hover:bg-stone-50 transition-colors">
+                  <Td>
+                    <div className="font-numeric text-xs text-stone-900 font-medium">{a.application_id}</div>
+                    <div className="text-xs text-stone-500 truncate max-w-[200px]">{a.loan_purpose}</div>
+                  </Td>
+                  <Td>
+                    <span className="inline-flex items-center gap-2">
+                      <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[a.status] ?? 'bg-stone-400'}`} />
+                      <span className="text-stone-700">{a.status.replace('_', ' ')}</span>
+                    </span>
+                  </Td>
                   <Td>
                     {a.decision ? (
-                      <DecisionBadge decision={a.decision} />
+                      <DecisionPill decision={a.decision} />
                     ) : (
                       <span className="text-stone-400 text-xs">—</span>
                     )}
                   </Td>
-                  <Td align="right">{a.score !== null ? (a.score * 100).toFixed(1) : '—'}</Td>
-                  <Td><span className="text-xs text-stone-500">{new Date(a.submitted_at).toLocaleString()}</span></Td>
+                  <Td align="right">
+                    <span className="font-numeric text-stone-900">
+                      {a.score !== null ? (a.score * 100).toFixed(1) : '—'}
+                    </span>
+                  </Td>
+                  <Td align="right">
+                    <span className="font-numeric text-stone-900">
+                      {a.loan_amount.toLocaleString('en-IN')}
+                    </span>
+                  </Td>
                   <Td>
+                    <span className="text-xs text-stone-500 font-numeric">
+                      {new Date(a.submitted_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                    </span>
+                  </Td>
+                  <Td align="right">
                     <Link
                       href={`/admin/applications/${encodeURIComponent(a.application_id)}`}
-                      className="text-harvest-600 hover:text-harvest-700 inline-flex items-center gap-1 text-xs"
+                      className="text-stone-500 hover:text-stone-900 inline-flex items-center gap-0.5 text-xs"
                     >
                       Open <ChevronRight className="w-3 h-3" />
                     </Link>
@@ -116,31 +154,28 @@ export default function AdminApplicationsListPage() {
               ))}
             </tbody>
           </table>
-        </Card>
+        </div>
       )}
 
-      <div className="flex items-center justify-between text-sm text-stone-600">
-        <span>
-          Showing {items.length === 0 ? 0 : offset + 1}-{offset + items.length} of {total}
+      <div className="flex items-center justify-between text-sm text-stone-500">
+        <span className="font-numeric">
+          {items.length === 0 ? '0' : `${offset + 1}–${offset + items.length}`} of {total.toLocaleString()}
         </span>
         <div className="flex gap-2">
-          <Button
-            variant="secondary" size="sm"
+          <button
             disabled={offset === 0}
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-            icon={<ChevronLeft className="w-4 h-4" />}
+            className="px-2.5 py-1 text-sm rounded-md border hairline bg-white text-stone-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-stone-50 inline-flex items-center gap-1"
           >
-            Prev
-          </Button>
-          <Button
-            variant="secondary" size="sm"
+            <ChevronLeft className="w-3.5 h-3.5" /> Prev
+          </button>
+          <button
             disabled={offset + PAGE_SIZE >= total}
             onClick={() => setOffset(offset + PAGE_SIZE)}
-            icon={<ChevronRight className="w-4 h-4" />}
-            iconPosition="right"
+            className="px-2.5 py-1 text-sm rounded-md border hairline bg-white text-stone-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-stone-50 inline-flex items-center gap-1"
           >
-            Next
-          </Button>
+            Next <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
     </div>
@@ -148,23 +183,15 @@ export default function AdminApplicationsListPage() {
 }
 
 function Th({ children, align = 'left' }: { children?: React.ReactNode; align?: 'left' | 'right' }) {
-  return <th className={`px-4 py-3 text-${align} font-medium`}>{children}</th>
+  return <th className={`px-4 py-2.5 text-${align} font-medium`}>{children}</th>
 }
 function Td({ children, align = 'left' }: { children?: React.ReactNode; align?: 'left' | 'right' }) {
-  return <td className={`px-4 py-3 text-${align}`}>{children}</td>
+  return <td className={`px-4 py-3 text-${align} align-middle`}>{children}</td>
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const variant = status === 'decided' || status === 'disbursed' ? 'success'
-    : status === 'rejected' ? 'error'
-    : status === 'under_review' ? 'warning'
-    : 'neutral'
-  return <Badge variant={variant}>{status.replace('_', ' ')}</Badge>
-}
-
-function DecisionBadge({ decision }: { decision: string }) {
-  const variant = decision === 'approve' ? 'success'
-    : decision === 'reject' ? 'error'
-    : 'warning'
-  return <Badge variant={variant}>{decision.replace('_', ' ')}</Badge>
+function DecisionPill({ decision }: { decision: string }) {
+  const tone = decision === 'approve' ? 'text-field-700'
+    : decision === 'reject' ? 'text-clay-700'
+    : 'text-harvest-700'
+  return <span className={`text-sm font-medium ${tone}`}>{decision.replace('_', ' ')}</span>
 }

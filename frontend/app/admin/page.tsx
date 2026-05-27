@@ -1,22 +1,24 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Card, Alert, Skeleton, Button } from '@/components/ui'
 import { fetchAdminMetrics, type AdminMetricsOverview } from '@/lib/api'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
-import { TrendingUp, Activity, Clock, AlertCircle, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Loader2 } from 'lucide-react'
 
 const REFRESH_MS = 10_000
+const SMALL_SAMPLE_THRESHOLD = 30
 
 export default function AdminOverview() {
   const [data, setData] = useState<AdminMetricsOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true)
+    setRefreshing(true)
     try {
       setData(await fetchAdminMetrics())
       setError('')
@@ -24,6 +26,7 @@ export default function AdminOverview() {
       if (!silent) setError(e instanceof Error ? e.message : 'Failed to load metrics')
     } finally {
       if (!silent) setLoading(false)
+      setRefreshing(false)
     }
   }
 
@@ -33,128 +36,242 @@ export default function AdminOverview() {
     return () => clearInterval(id)
   }, [])
 
-  if (loading) return <Skeleton className="h-96 w-full" />
-  if (error || !data) return <Alert variant="error" message={error || 'No data'} />
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-stone-500 py-16 justify-center">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading metrics…
+      </div>
+    )
+  }
+  if (error || !data) {
+    return (
+      <div className="rounded-md bg-clay-50 border hairline border-clay-200 p-4 text-sm text-clay-700">
+        {error || 'No data'}
+      </div>
+    )
+  }
 
   const decisionsByKey: Record<string, number> = Object.fromEntries(
     data.decisions.map(d => [d.decision, d.count]),
   )
+  const overridesByKey: Record<string, number> = Object.fromEntries(
+    data.override_decisions.map(d => [d.decision, d.count]),
+  )
+
+  const approvalRate = data.total_predictions > 0
+    ? ((decisionsByKey.approve || 0) / data.total_predictions) * 100
+    : null
+
+  const overrideRate = (data.total_predictions + data.override_count) > 0
+    ? (data.override_count / (data.total_predictions + data.override_count)) * 100
+    : null
+
+  const smallSample = data.total_predictions < SMALL_SAMPLE_THRESHOLD
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-stone-900">Operator overview</h1>
-        <Button
-          variant="ghost" size="sm" onClick={() => load(false)}
-          icon={<RefreshCw className="w-4 h-4" />}
+    <div className="space-y-12">
+      <header className="flex items-end justify-between gap-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-stone-900 tracking-tight">Overview</h1>
+          <p className="mt-1 text-sm text-stone-500">
+            Last {data.window_hours}h · auto-refresh every {REFRESH_MS / 1000}s
+          </p>
+        </div>
+        <button
+          onClick={() => load(false)}
+          className="text-sm text-stone-500 hover:text-stone-900 inline-flex items-center gap-1.5"
         >
-          Refresh
-        </Button>
-      </div>
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+        </button>
+      </header>
 
-      <p className="text-sm text-stone-500">
-        Last {data.window_hours}h · auto-refreshes every {REFRESH_MS / 1000}s
-      </p>
+      {/* Section 1: Model performance */}
+      <section>
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500">
+            Model performance (window)
+          </h2>
+          {smallSample && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-harvest-700">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Small sample (N = {data.total_predictions}) — percentiles are unreliable
+            </span>
+          )}
+        </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatTile icon={<TrendingUp />} label="Predictions" value={data.total_predictions.toLocaleString()} sublabel={`avg score ${(data.avg_score * 100).toFixed(1)}%`} />
-        <StatTile icon={<CheckCircle2 />} label="Approval rate" value={
-          data.total_predictions > 0
-            ? `${(((decisionsByKey.approve || 0) / data.total_predictions) * 100).toFixed(1)}%`
-            : '—'
-        } sublabel={`${decisionsByKey.approve || 0} / ${data.total_predictions}`} />
-        <StatTile icon={<Clock />} label="P95 latency" value={`${data.p95_latency_ms.toFixed(0)} ms`} sublabel={`avg ${data.avg_latency_ms.toFixed(0)} ms`} />
-        <StatTile
-          icon={<AlertCircle />}
-          label="Pending review"
-          value={data.pending_review_count.toString()}
-          sublabel={data.drift_baseline_available ? 'drift baseline ✓' : 'drift baseline: v2 only'}
-          tone={data.pending_review_count > 0 ? 'warning' : 'neutral'}
-        />
-      </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-stone-200 rounded-xl overflow-hidden border hairline">
+          <Tile label="Model predictions" value={data.total_predictions.toLocaleString()} sublabel="overrides excluded" />
+          <Tile
+            label="Approval rate"
+            value={approvalRate === null ? '—' : `${approvalRate.toFixed(1)}%`}
+            sublabel={`${decisionsByKey.approve || 0} of ${data.total_predictions} approved by model`}
+          />
+          <Tile
+            label="P95 latency"
+            value={`${data.p95_latency_ms.toFixed(0)} ms`}
+            sublabel={`avg ${data.avg_latency_ms.toFixed(0)} ms`}
+            muted={smallSample}
+          />
+          <Tile
+            label="Avg score"
+            value={`${(data.avg_score * 100).toFixed(1)}`}
+            unit="/ 100"
+            sublabel="confidence weighted lower=riskier"
+          />
+        </div>
 
-      <Card className="bg-white shadow-soft">
-        <h2 className="text-lg font-semibold text-stone-900 mb-4 flex items-center gap-2">
-          <Activity className="w-5 h-5 text-harvest-600" /> Score distribution
+        <div className="mt-6 rounded-xl border hairline bg-white p-6">
+          <div className="flex items-baseline justify-between mb-4">
+            <p className="text-sm font-medium text-stone-900">Score distribution</p>
+            <p className="text-xs text-stone-500">
+              <span className="inline-block w-2 h-2 rounded-sm bg-clay-600 mr-1 align-middle" /> reject ‹ 0.4
+              <span className="inline-block w-2 h-2 rounded-sm bg-harvest-500 ml-3 mr-1 align-middle" /> manual 0.4–0.6
+              <span className="inline-block w-2 h-2 rounded-sm bg-field-600 ml-3 mr-1 align-middle" /> approve ≥ 0.6
+            </p>
+          </div>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.score_histogram} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="2 4" stroke="#E7E5E4" vertical={false} />
+                <XAxis
+                  dataKey="range_low"
+                  tickFormatter={(v) => `${(v * 100).toFixed(0)}`}
+                  tick={{ fill: '#78716C', fontSize: 11 }}
+                  axisLine={{ stroke: '#E7E5E4' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fill: '#78716C', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  cursor={{ fill: '#F5F5F4' }}
+                  contentStyle={{ borderRadius: 8, border: '1px solid #E7E5E4', fontSize: 12 }}
+                  formatter={((v: number) => [`${v}`, 'predictions']) as any}
+                  labelFormatter={((low: number) => `${Math.round(low * 100)}–${Math.round((low + 0.1) * 100)}`) as any}
+                />
+                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                  {data.score_histogram.map((bucket, i) => (
+                    <Cell
+                      key={i}
+                      fill={
+                        bucket.range_high <= 0.4 ? '#DC2626' :
+                        bucket.range_low >= 0.6 ? '#16A34A' :
+                        '#F59E0B'
+                      }
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-3 gap-px bg-stone-200 rounded-xl overflow-hidden border hairline">
+          <DecisionCell decision="approve"        count={decisionsByKey.approve       || 0} total={data.total_predictions} />
+          <DecisionCell decision="manual_review"  count={decisionsByKey.manual_review || 0} total={data.total_predictions} />
+          <DecisionCell decision="reject"         count={decisionsByKey.reject        || 0} total={data.total_predictions} />
+        </div>
+      </section>
+
+      {/* Section 2: Operator activity */}
+      <section>
+        <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500 mb-4">
+          Operator activity (window)
         </h2>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data.score_histogram} margin={{ top: 5, right: 20, left: 0, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-              <XAxis
-                dataKey="range_low"
-                tickFormatter={(v) => `${(v * 100).toFixed(0)}`}
-                label={{ value: 'Score bucket (0-100)', position: 'insideBottom', offset: -10 }}
-                tick={{ fill: '#78716c', fontSize: 12 }}
-              />
-              <YAxis tick={{ fill: '#78716c', fontSize: 12 }} />
-              <Tooltip
-                formatter={((v: number) => [`${v} predictions`, 'Count']) as any}
-                labelFormatter={((low: number) => `Score ${Math.round(low * 100)}-${Math.round((low + 0.1) * 100)}`) as any}
-              />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {data.score_histogram.map((bucket, i) => (
-                  <Cell
-                    key={i}
-                    fill={
-                      bucket.range_high <= 0.4 ? '#dc2626' :    // clay (reject band)
-                      bucket.range_low >= 0.6 ? '#16a34a' :     // field (approve band)
-                      '#eab308'                                  // harvest (manual review band)
-                    }
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-stone-200 rounded-xl overflow-hidden border hairline">
+          <Tile
+            label="Overrides"
+            value={data.override_count.toLocaleString()}
+            sublabel="manual decisions by operators"
+          />
+          <Tile
+            label="Override rate"
+            value={overrideRate === null ? '—' : `${overrideRate.toFixed(1)}%`}
+            sublabel="of all decisions in window"
+          />
+          <Tile
+            label="→ approve"
+            value={(overridesByKey.approve || 0).toLocaleString()}
+            sublabel="model → approve overrides"
+          />
+          <Tile
+            label="→ reject"
+            value={(overridesByKey.reject || 0).toLocaleString()}
+            sublabel="model → reject overrides"
+          />
         </div>
-        <p className="text-xs text-stone-500 mt-2">
-          Red = reject band (&lt;0.4), Yellow = manual review (0.4-0.6), Green = approve (&gt;0.6).
-        </p>
-      </Card>
+      </section>
 
-      <Card className="bg-white shadow-soft">
-        <h2 className="text-lg font-semibold text-stone-900 mb-4">Decision breakdown</h2>
-        <div className="grid grid-cols-3 gap-4">
-          <DecisionTile decision="approve" count={decisionsByKey.approve || 0} total={data.total_predictions} />
-          <DecisionTile decision="manual_review" count={decisionsByKey.manual_review || 0} total={data.total_predictions} />
-          <DecisionTile decision="reject" count={decisionsByKey.reject || 0} total={data.total_predictions} />
+      {/* Section 3: Pipeline state (now snapshot, not window-bound) */}
+      <section>
+        <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500 mb-4">
+          Pipeline state <span className="ml-2 text-stone-400 normal-case font-normal tracking-normal">live snapshot, not window-bound</span>
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-stone-200 rounded-xl overflow-hidden border hairline">
+          <Tile
+            label="Pending review"
+            value={data.pending_review_count.toLocaleString()}
+            sublabel="status: submitted or under_review"
+            tone={data.pending_review_count > 0 ? 'warning' : undefined}
+          />
+          <Tile
+            label="Errored"
+            value={data.errored_count.toLocaleString()}
+            sublabel="inference failures, no prediction row"
+            tone={data.errored_count > 0 ? 'warning' : undefined}
+          />
+          <Tile
+            label="Drift baseline"
+            value={data.drift_baseline_available ? 'present' : 'missing'}
+            sublabel="training-set feature quantiles"
+          />
+          <Tile
+            label="Drift buffer"
+            value={data.recent_buffer_size.toLocaleString()}
+            sublabel="recent inputs for PSI"
+          />
         </div>
-      </Card>
+      </section>
     </div>
   )
 }
 
-function StatTile({ icon, label, value, sublabel, tone }: {
-  icon: React.ReactNode; label: string; value: string; sublabel?: string; tone?: 'warning' | 'neutral'
+function Tile({
+  label, value, unit, sublabel, tone, muted,
+}: {
+  label: string
+  value: string
+  unit?: string
+  sublabel?: string
+  tone?: 'warning'
+  muted?: boolean
 }) {
   return (
-    <Card className="bg-white shadow-soft">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-stone-500">{label}</p>
-          <p className="text-3xl font-bold text-stone-900 mt-1">{value}</p>
-          {sublabel && <p className="text-xs text-stone-500 mt-1">{sublabel}</p>}
-        </div>
-        <div className={`p-2 rounded-lg ${tone === 'warning' ? 'bg-harvest-50 text-harvest-700' : 'bg-stone-100 text-stone-600'}`}>
-          {icon}
-        </div>
-      </div>
-    </Card>
+    <div className="bg-white px-5 py-4">
+      <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">{label}</p>
+      <p className={`mt-2 text-2xl font-semibold font-numeric ${tone === 'warning' ? 'text-harvest-700' : muted ? 'text-stone-400' : 'text-stone-900'}`}>
+        {value}
+        {unit && <span className="text-sm text-stone-400 font-normal ml-1">{unit}</span>}
+      </p>
+      {sublabel && <p className="mt-1 text-[11px] text-stone-500">{sublabel}</p>}
+    </div>
   )
 }
 
-function DecisionTile({ decision, count, total }: { decision: string; count: number; total: number }) {
+function DecisionCell({
+  decision, count, total,
+}: { decision: string; count: number; total: number }) {
   const pct = total > 0 ? (count / total) * 100 : 0
-  const cls = decision === 'approve'
-    ? 'bg-field-50 text-field-700 border-field-200'
-    : decision === 'reject'
-    ? 'bg-clay-50 text-clay-700 border-clay-200'
-    : 'bg-harvest-50 text-harvest-700 border-harvest-200'
+  const label = decision === 'manual_review' ? 'Manual review' : decision.charAt(0).toUpperCase() + decision.slice(1)
+  const tone = decision === 'approve' ? 'text-field-700' : decision === 'reject' ? 'text-clay-700' : 'text-harvest-700'
   return (
-    <div className={`p-4 rounded-lg border ${cls}`}>
-      <p className="text-xs uppercase tracking-wide">{decision.replace('_', ' ')}</p>
-      <p className="text-2xl font-bold mt-1">{count}</p>
-      <p className="text-xs mt-1">{pct.toFixed(1)}%</p>
+    <div className="bg-white px-5 py-4">
+      <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">{label}</p>
+      <p className={`mt-2 text-2xl font-semibold font-numeric ${tone}`}>{count}</p>
+      <p className="mt-1 text-[11px] text-stone-500 font-numeric">{pct.toFixed(1)}% of model decisions</p>
     </div>
   )
 }

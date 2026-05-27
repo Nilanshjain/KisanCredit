@@ -2,11 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Card, Button, Badge, Alert, Skeleton } from '@/components/ui'
-import { motion } from 'framer-motion'
+import { Button, Alert, Skeleton } from '@/components/ui'
 import {
-  ArrowLeft, RefreshCw, TrendingUp, FileText, CheckCircle2, XCircle,
-  AlertTriangle, Clock, Loader2, User as UserIcon, Settings,
+  ArrowLeft, RefreshCw, Loader2, Lightbulb,
 } from 'lucide-react'
 import {
   getAccessToken, fetchTimeline, NON_TERMINAL_STATUSES,
@@ -14,9 +12,8 @@ import {
   type ApplicationTimelineResponse, type ApplicationTimelineEvent,
   type ApplicationExplanation, type CounterfactualResult,
 } from '@/lib/api'
-import { Sparkles, Languages, Lightbulb } from 'lucide-react'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1'
 const POLL_INTERVAL_MS = 3000
 
 interface PredictionDetail {
@@ -60,25 +57,28 @@ async function fetchDetail(applicationId: string): Promise<ApplicationDetail> {
   return response.json()
 }
 
-type BadgeVariant = 'success' | 'error' | 'warning' | 'neutral'
-
-const STATUS_META: Record<string, { label: string; variant: BadgeVariant; icon: typeof Clock }> = {
-  submitted:    { label: 'Submitted',    variant: 'neutral', icon: Clock },
-  under_review: { label: 'Under review', variant: 'warning', icon: Loader2 },
-  decided:      { label: 'Decided',      variant: 'success', icon: CheckCircle2 },
-  disbursed:    { label: 'Disbursed',    variant: 'success', icon: CheckCircle2 },
-  rejected:     { label: 'Rejected',     variant: 'error',   icon: XCircle },
-  approved:     { label: 'Approved',     variant: 'success', icon: CheckCircle2 },
+const STATUS_DOT: Record<string, string> = {
+  submitted:    'bg-stone-400',
+  under_review: 'bg-harvest-500',
+  decided:      'bg-stone-900',
+  approved:     'bg-field-600',
+  rejected:     'bg-clay-600',
+  disbursed:    'bg-field-600',
 }
 
-function statusMeta(s: string): { label: string; variant: BadgeVariant; icon: typeof Clock } {
-  return STATUS_META[s] ?? { label: s.toUpperCase(), variant: 'neutral', icon: Clock }
+const STATUS_LABEL: Record<string, string> = {
+  submitted:    'Submitted',
+  under_review: 'Under review',
+  decided:      'Decided',
+  approved:     'Approved',
+  rejected:     'Rejected',
+  disbursed:    'Disbursed',
 }
 
-const DECISION_COPY: Record<string, { title: string; tone: string; icon: typeof CheckCircle2 }> = {
-  approve:        { title: 'Approved',       tone: 'text-field-700',   icon: CheckCircle2 },
-  manual_review:  { title: 'Manual review',  tone: 'text-harvest-700', icon: AlertTriangle },
-  reject:         { title: 'Not approved',   tone: 'text-clay-700',    icon: XCircle },
+const DECISION_COPY: Record<string, { title: string; tone: string }> = {
+  approve:        { title: 'Approved',     tone: 'text-field-700'   },
+  manual_review:  { title: 'Manual review', tone: 'text-harvest-700' },
+  reject:         { title: 'Not approved', tone: 'text-clay-700'    },
 }
 
 export default function ApplicationDetailPage() {
@@ -95,7 +95,6 @@ export default function ApplicationDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Holds the interval id so we can clear it from outside the effect (refresh button)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadAll = async (silent = false) => {
@@ -103,7 +102,7 @@ export default function ApplicationDetailPage() {
     try {
       const [tl, detail] = await Promise.all([
         fetchTimeline(applicationId),
-        fetchDetail(applicationId).catch(() => null), // detail may briefly 404 right after submit; tolerate
+        fetchDetail(applicationId).catch(() => null),
       ])
       setTimeline(tl)
       if (detail) setApplication(detail)
@@ -117,9 +116,7 @@ export default function ApplicationDetailPage() {
 
   useEffect(() => {
     loadAll()
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationId])
 
@@ -134,11 +131,28 @@ export default function ApplicationDetailPage() {
       clearInterval(pollRef.current)
       pollRef.current = null
     }
-    return () => {
-      // cleanup on status flip
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeline?.current_status])
+
+  // The final poll fires timeline+detail in parallel; under concurrent commits
+  // the timeline can show `decided` while the detail still observes
+  // predictions: []. Polling has already stopped by then, so the empty state
+  // sticks. One delayed re-fetch closes the gap.
+  const postDecisionRefetchedRef = useRef(false)
+  useEffect(() => {
+    if (!timeline) return
+    if (NON_TERMINAL_STATUSES.has(timeline.current_status)) {
+      postDecisionRefetchedRef.current = false
+      return
+    }
+    if (postDecisionRefetchedRef.current) return
+    if (application?.predictions?.length) return
+    postDecisionRefetchedRef.current = true
+    const t = setTimeout(() => {
+      fetchDetail(applicationId).then(setApplication).catch(() => {})
+    }, 500)
+    return () => clearTimeout(t)
+  }, [timeline?.current_status, application?.predictions?.length, applicationId])
 
   // Once a decision exists, fetch the LLM explanation + counter-factual.
   // Refetches when language changes.
@@ -156,312 +170,261 @@ export default function ApplicationDetailPage() {
         setExplanation(ex)
         setCounterfactual(cf)
       })
-      .catch(() => {/* swallow — endpoint may briefly 503 right after decision */})
+      .catch(() => {})
       .finally(() => { if (!cancelled) setLlmLoading(false) })
     return () => { cancelled = true }
   }, [applicationId, language, timeline?.current_status, application?.predictions?.length])
 
   if (loading && !timeline) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 p-8">
-        <div className="max-w-6xl mx-auto space-y-6">
-          <Skeleton className="h-12 w-64" />
+      <main className="min-h-screen bg-stone-50 pt-12 px-6">
+        <div className="max-w-3xl mx-auto space-y-4">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-32 w-full" />
           <Skeleton className="h-48 w-full" />
-          <Skeleton className="h-64 w-full" />
         </div>
-      </div>
+      </main>
     )
   }
 
   if (error || !timeline) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 p-8">
-        <div className="max-w-6xl mx-auto">
+      <main className="min-h-screen bg-stone-50 pt-12 px-6">
+        <div className="max-w-3xl mx-auto">
           <Alert variant="error" message={error || 'Application not found'} />
-          <Button
-            onClick={() => router.push('/dashboard')}
-            className="mt-4"
-            icon={<ArrowLeft className="w-4 h-4" />}
-          >
-            Back to dashboard
-          </Button>
+          <div className="mt-4">
+            <Button onClick={() => router.push('/dashboard')} variant="secondary" icon={<ArrowLeft className="w-4 h-4" />}>
+              Back to dashboard
+            </Button>
+          </div>
         </div>
-      </div>
+      </main>
     )
   }
 
   const currentStatus = timeline.current_status
-  const status = statusMeta(currentStatus)
-  const StatusIcon = status.icon
   const isProcessing = NON_TERMINAL_STATUSES.has(currentStatus)
   const latestPrediction: PredictionDetail | null = application?.predictions?.[0] ?? null
   const decision = latestPrediction?.decision ?? null
   const decisionCopy = decision ? DECISION_COPY[decision] : null
+  const statusDot = STATUS_DOT[currentStatus] ?? 'bg-stone-400'
+  const statusLabel = STATUS_LABEL[currentStatus] ?? currentStatus
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <main className="min-h-screen bg-stone-50 pt-12 pb-16 px-6">
+      <div className="max-w-3xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-4">
-            <Button
-              onClick={() => router.push('/dashboard')}
-              variant="ghost"
-              icon={<ArrowLeft className="w-4 h-4" />}
-            >
-              Back
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Application</h1>
-              <p className="text-gray-600 mt-1 font-mono text-sm">{applicationId}</p>
-            </div>
-          </div>
-
-          <Button
-            onClick={() => loadAll(false)}
-            variant="outline"
-            icon={<RefreshCw className="w-4 h-4" />}
+        <div className="flex items-center justify-between gap-4 mb-8">
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="text-sm text-stone-500 hover:text-stone-900 inline-flex items-center gap-1.5"
           >
-            Refresh
-          </Button>
+            <ArrowLeft className="w-3.5 h-3.5" /> Back
+          </button>
+          <button
+            onClick={() => loadAll(false)}
+            className="text-sm text-stone-500 hover:text-stone-900 inline-flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          </button>
         </div>
 
-        {/* Status card */}
-        <Card className="bg-white shadow-lg">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-center">
-            <div>
-              <p className="text-sm text-gray-600 mb-2">Status</p>
-              <div className="inline-flex items-center gap-2">
-                <motion.span
-                  animate={isProcessing ? { rotate: 360 } : {}}
-                  transition={isProcessing ? { duration: 2, repeat: Infinity, ease: 'linear' } : {}}
-                >
-                  <StatusIcon className="w-5 h-5" />
-                </motion.span>
-                <Badge variant={status.variant}>{status.label}</Badge>
+        <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">Application</p>
+        <h1 className="mt-1 text-2xl font-semibold text-stone-900 tracking-tight font-numeric">
+          {applicationId}
+        </h1>
+
+        {/* Summary tiles */}
+        <div className="mt-8 rounded-xl border hairline bg-white overflow-hidden">
+          <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x hairline">
+            <div className="px-5 py-4">
+              <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">Status</p>
+              <div className="mt-2 flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${statusDot}`} />
+                <span className="font-medium text-stone-900">{statusLabel}</span>
               </div>
             </div>
-
-            <div>
-              <p className="text-sm text-gray-600 mb-2">Loan amount</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {application ? `₹${application.loan_amount.toLocaleString('en-IN')}` : '—'}
+            <div className="px-5 py-4">
+              <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">Loan amount</p>
+              <p className="mt-2 font-numeric font-semibold text-stone-900 text-lg">
+                ₹{application?.loan_amount.toLocaleString('en-IN')}
               </p>
             </div>
-
-            <div>
-              <p className="text-sm text-gray-600 mb-2">Score</p>
-              {latestPrediction ? (
-                <p className="text-2xl font-bold text-gray-900">
-                  {Math.round(latestPrediction.profitability_score * 100)}/100
-                </p>
-              ) : (
-                <p className="text-sm text-gray-400 italic">Pending decision…</p>
-              )}
-            </div>
-
-            <div>
-              <p className="text-sm text-gray-600 mb-2">Decision</p>
-              {decisionCopy ? (
-                <p className={`text-2xl font-bold ${decisionCopy.tone}`}>{decisionCopy.title}</p>
-              ) : isProcessing ? (
-                <p className="text-sm text-gray-400 italic">Processing…</p>
-              ) : currentStatus === 'rejected' ? (
-                <p className="text-2xl font-bold text-clay-700">Rejected</p>
-              ) : (
-                <p className="text-sm text-gray-400 italic">—</p>
-              )}
+            <div className="px-5 py-4">
+              <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">Decision</p>
+              <div className="mt-2">
+                {decisionCopy ? (
+                  <span className={`font-medium ${decisionCopy.tone}`}>{decisionCopy.title}</span>
+                ) : isProcessing ? (
+                  <span className="text-sm text-stone-500 inline-flex items-center gap-1.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing
+                  </span>
+                ) : (
+                  <span className="text-sm text-stone-500">—</span>
+                )}
+              </div>
             </div>
           </div>
 
-          {isProcessing && (
-            <Alert variant="info" className="mt-4">
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Auto-refreshing every {POLL_INTERVAL_MS / 1000}s while processing…</span>
-              </div>
-            </Alert>
+          {latestPrediction && (
+            <div className="px-5 py-3 border-t hairline bg-stone-50/50 text-xs text-stone-500 flex flex-wrap items-baseline gap-x-6 gap-y-1 font-numeric">
+              <span>Score <span className="text-stone-900 font-medium">{(latestPrediction.profitability_score * 100).toFixed(1)}</span> / 100</span>
+              <span>Confidence <span className="text-stone-900 font-medium">{(latestPrediction.confidence * 100).toFixed(1)}%</span></span>
+              <span>Model <span className="text-stone-900 font-medium">{latestPrediction.model_version ?? '—'}</span></span>
+              {typeof latestPrediction.prediction_latency_ms === 'number' && (
+                <span>Inference <span className="text-stone-900 font-medium">{latestPrediction.prediction_latency_ms.toFixed(0)}ms</span></span>
+              )}
+            </div>
           )}
-        </Card>
 
-        {/* LLM-narrated explanation — sits directly under the decision so the
-            "why" is the first thing the applicant reads after the outcome. */}
+          {isProcessing && (
+            <div className="px-5 py-3 border-t hairline bg-stone-50 text-xs text-stone-500 inline-flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Auto-refreshing every {POLL_INTERVAL_MS / 1000}s while processing.
+            </div>
+          )}
+        </div>
+
+        {/* Why this decision (NL explanation) */}
         {latestPrediction && (
-          <Card className="bg-white shadow-lg">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-600" /> Why this decision
-              </h2>
-              <div className="inline-flex bg-stone-100 rounded-lg p-0.5">
+          <section className="mt-10">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500">Why this decision</h2>
+              <div className="inline-flex bg-stone-100 rounded-md p-0.5">
                 <button
                   onClick={() => setLanguage('en')}
-                  className={`px-3 py-1 text-xs rounded-md transition ${language === 'en' ? 'bg-white text-stone-900 shadow' : 'text-stone-600'}`}
+                  className={`px-2.5 py-1 text-xs font-medium rounded transition ${language === 'en' ? 'bg-white text-stone-900 shadow-soft' : 'text-stone-500'}`}
                 >EN</button>
                 <button
                   onClick={() => setLanguage('hi')}
-                  className={`px-3 py-1 text-xs rounded-md transition ${language === 'hi' ? 'bg-white text-stone-900 shadow' : 'text-stone-600'}`}
+                  className={`px-2.5 py-1 text-xs font-medium rounded transition ${language === 'hi' ? 'bg-white text-stone-900 shadow-soft' : 'text-stone-500'}`}
                 >हिन्दी</button>
               </div>
             </div>
-            {llmLoading && !explanation ? (
-              <Skeleton className="h-16 w-full" />
-            ) : explanation?.natural_language ? (
-              <div className="space-y-3">
-                <p className="text-base text-stone-800 leading-relaxed">{explanation.natural_language.text}</p>
-                {explanation.natural_language.suggestion && (
-                  <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
-                    <Lightbulb className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm text-amber-900">{explanation.natural_language.suggestion}</p>
-                  </div>
-                )}
-                <p className="text-xs text-stone-400 flex items-center gap-1">
-                  <Languages className="w-3 h-3" />
-                  {explanation.natural_language.source === 'gemini' ? 'Generated by Gemini' : 'Template (Gemini unavailable)'}
-                  {explanation.natural_language.cached ? ' · cached' : ''}
-                </p>
-              </div>
-            ) : (
-              <p className="text-sm text-stone-500">Explanation will appear here once the decision is finalised.</p>
-            )}
-          </Card>
+            <div className="rounded-xl border hairline bg-white p-6">
+              {llmLoading && !explanation ? (
+                <Skeleton className="h-16 w-full" />
+              ) : explanation?.natural_language ? (
+                <div className="space-y-4">
+                  <p className="text-stone-800 leading-relaxed">{explanation.natural_language.text}</p>
+                  {explanation.natural_language.suggestion && (
+                    <div className="text-sm text-stone-600 leading-relaxed pl-4 border-l-2 border-harvest-400">
+                      {explanation.natural_language.suggestion}
+                    </div>
+                  )}
+                  <p className="text-xs text-stone-400">
+                    {explanation.natural_language.source === 'gemini'
+                      ? 'Generated by Gemini'
+                      : 'Template (Gemini unavailable)'}
+                    {explanation.natural_language.cached ? ' · cached' : ''}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-stone-500">Explanation will appear once the decision is finalised.</p>
+              )}
+            </div>
+          </section>
         )}
 
-        {/* Lifecycle timeline */}
-        <Card className="bg-white shadow-lg">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-amber-600" />
-            Lifecycle
-          </h2>
-
-          {timeline.events.length === 0 ? (
-            <p className="text-sm text-gray-500">No status events recorded yet.</p>
-          ) : (
-            <ol className="relative border-l-2 border-amber-200 pl-6 space-y-6">
-              {timeline.events.map((evt, i) => (
-                <TimelineRow key={`${evt.occurred_at}-${i}`} evt={evt} isLast={i === timeline.events.length - 1} />
-              ))}
-            </ol>
-          )}
-        </Card>
-
-        {/* Counter-factual "how to improve" card — only when not already approved */}
+        {/* Counter-factual */}
         {latestPrediction && counterfactual && counterfactual.changes.length > 0 && (
-          <Card className="bg-white shadow-lg">
-            <h2 className="text-xl font-bold flex items-center gap-2 mb-3">
-              <Lightbulb className="w-5 h-5 text-amber-600" /> How to improve
+          <section className="mt-10">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500 mb-4 flex items-center gap-2">
+              <Lightbulb className="w-3.5 h-3.5" /> How to improve
             </h2>
-            {counterfactual.natural_language?.text && (
-              <p className="text-base text-stone-800 mb-4 leading-relaxed">{counterfactual.natural_language.text}</p>
-            )}
-            <div className="space-y-2">
-              {counterfactual.changes.map(c => (
-                <div key={c.feature} className="flex items-baseline justify-between gap-3 p-3 bg-stone-50 rounded-lg">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-stone-900">{c.display_label}</p>
-                    <p className="text-xs text-stone-500 mt-0.5">
-                      {c.display_unit}{c.current.toLocaleString('en-IN')} → {c.display_unit}{c.suggested.toLocaleString('en-IN')}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-field-700">+{(c.delta_score * 100).toFixed(1)} pts</p>
-                    <p className="text-xs text-stone-500">new score {(c.new_score * 100).toFixed(0)}/100</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-stone-500 mt-3">
-              {counterfactual.reachable
-                ? `These changes would push your score to ${(counterfactual.final_score * 100).toFixed(0)}/100 — into the approve band.`
-                : `Even with these changes the model couldn't lift the score into the approve band. Consider improving overall financial profile over time.`}
-            </p>
-          </Card>
-        )}
-
-        {/* Decision panel — only once a prediction exists */}
-        {latestPrediction && (
-          <Card className="bg-white shadow-lg">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-amber-600" />
-              ML prediction
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Stat label="Profitability score" value={`${(latestPrediction.profitability_score * 100).toFixed(1)}%`} tone="amber" />
-              <Stat label="Model confidence"   value={`${(latestPrediction.confidence * 100).toFixed(1)}%`}            tone="blue" />
-              <Stat label="Model version"      value={latestPrediction.model_version ?? '—'}                            tone="green" />
-            </div>
-            {latestPrediction.prediction_latency_ms !== undefined && (
-              <p className="text-sm text-gray-500 mt-4">
-                Inference completed in {latestPrediction.prediction_latency_ms.toFixed(2)} ms.
+            <div className="rounded-xl border hairline bg-white p-6">
+              {counterfactual.natural_language?.text && (
+                <p className="text-stone-800 leading-relaxed mb-5">{counterfactual.natural_language.text}</p>
+              )}
+              <ul className="divide-y hairline border-t hairline border-b hairline -mx-6">
+                {counterfactual.changes.map(c => (
+                  <li key={c.feature} className="flex items-baseline justify-between gap-3 px-6 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-stone-900">{c.display_label}</p>
+                      <p className="text-xs text-stone-500 mt-0.5 font-numeric">
+                        {c.display_unit}{c.current.toLocaleString('en-IN')}  →  {c.display_unit}{c.suggested.toLocaleString('en-IN')}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0 font-numeric">
+                      <p className="text-sm font-semibold text-field-700">+{(c.delta_score * 100).toFixed(1)} pts</p>
+                      <p className="text-xs text-stone-500">→ {(c.new_score * 100).toFixed(0)} / 100</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-stone-500 mt-5 leading-relaxed">
+                {counterfactual.reachable
+                  ? `These changes would push the score to ${(counterfactual.final_score * 100).toFixed(0)} / 100 — into the approve band.`
+                  : 'The model couldn\'t identify a small enough set of changes to flip the decision into approve.'}
               </p>
-            )}
-          </Card>
+            </div>
+          </section>
         )}
 
-        {/* Feature breakdown */}
+        {/* Lifecycle */}
+        <section className="mt-10">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500 mb-4">Lifecycle</h2>
+          <div className="rounded-xl border hairline bg-white p-6">
+            {timeline.events.length === 0 ? (
+              <p className="text-sm text-stone-500">No status events recorded yet.</p>
+            ) : (
+              <ol className="space-y-5 relative">
+                {/* vertical line behind dots */}
+                <span className="absolute left-[5px] top-1.5 bottom-1.5 w-px bg-stone-200" />
+                {timeline.events.map((evt, i) => (
+                  <TimelineRow key={`${evt.occurred_at}-${i}`} evt={evt} isLast={i === timeline.events.length - 1} />
+                ))}
+              </ol>
+            )}
+          </div>
+        </section>
+
+        {/* Extracted features */}
         {application?.extracted_features && (
-          <Card className="bg-white shadow-lg">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-amber-600" />
-              Extracted features (top 12)
+          <section className="mt-10">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-stone-500 mb-4">
+              Extracted features
             </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {Object.entries(application.extracted_features).slice(0, 12).map(([feature, value]) => (
-                <div key={feature} className="border-l-4 border-amber-500 pl-4 py-2">
-                  <p className="text-xs text-gray-600 truncate uppercase" title={feature}>
-                    {feature.replace(/_/g, ' ')}
-                  </p>
-                  <p className="text-lg font-semibold text-gray-900">
-                    {typeof value === 'number' ? value.toFixed(3) : value}
-                  </p>
-                </div>
-              ))}
+            <div className="rounded-xl border hairline bg-white overflow-hidden">
+              <div className="px-6 py-3 border-b hairline bg-stone-50 text-xs text-stone-500">
+                {Object.keys(application.extracted_features).length} total — top 12 shown
+              </div>
+              <dl className="grid grid-cols-2 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x hairline font-numeric">
+                {Object.entries(application.extracted_features).slice(0, 12).map(([feature, value]) => (
+                  <div key={feature} className="px-5 py-3 odd:bg-stone-50/30">
+                    <dt className="text-[11px] uppercase tracking-wider text-stone-500 truncate" title={feature}>
+                      {feature.replace(/_/g, ' ')}
+                    </dt>
+                    <dd className="mt-0.5 text-stone-900 font-medium">
+                      {typeof value === 'number' ? value.toFixed(3) : value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
-            <p className="text-sm text-gray-500 mt-4">
-              {Object.keys(application.extracted_features).length} total features extracted
-            </p>
-          </Card>
+          </section>
         )}
       </div>
-    </div>
+    </main>
   )
 }
 
 function TimelineRow({ evt, isLast }: { evt: ApplicationTimelineEvent; isLast: boolean }) {
-  const meta = statusMeta(evt.to_status)
-  const Icon = meta.icon
-  const ActorIcon = evt.actor_type === 'admin' ? Settings : evt.actor_type === 'user' ? UserIcon : RefreshCw
   return (
-    <li className="relative">
-      <span className="absolute -left-[34px] top-1 flex items-center justify-center w-7 h-7 rounded-full bg-white border-2 border-amber-300">
-        <Icon className={`w-4 h-4 ${isLast ? 'text-amber-700' : 'text-amber-500'}`} />
-      </span>
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="font-semibold text-gray-900">
+    <li className="relative pl-5">
+      <span className={`absolute left-0 top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${isLast ? 'bg-stone-900' : 'bg-stone-400'}`} />
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <span className="font-medium text-stone-900">
           {evt.from_status ? `${evt.from_status} → ` : ''}{evt.to_status}
         </span>
-        <span className="text-xs text-gray-500">{new Date(evt.occurred_at).toLocaleString()}</span>
-        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-          <ActorIcon className="w-3 h-3" /> {evt.actor_type}
-          {evt.actor_id ? ` (${evt.actor_id})` : ''}
+        <span className="text-xs text-stone-500 font-numeric">
+          {new Date(evt.occurred_at).toLocaleString()}
         </span>
+        <span className="text-xs text-stone-500">· {evt.actor_type}</span>
       </div>
       {evt.reason && (
-        <p className="text-sm text-gray-600 mt-1 font-mono">{evt.reason}</p>
+        <p className="text-xs text-stone-500 mt-1 font-numeric">{evt.reason}</p>
       )}
     </li>
-  )
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone: 'amber' | 'blue' | 'green' }) {
-  const cls = {
-    amber: 'from-amber-50 to-orange-50 text-amber-700',
-    blue:  'from-blue-50 to-indigo-50 text-blue-700',
-    green: 'from-green-50 to-emerald-50 text-green-700',
-  }[tone]
-  return (
-    <div className={`p-4 bg-gradient-to-br ${cls.split(' ').slice(0, 2).join(' ')} rounded-lg`}>
-      <p className="text-sm text-gray-600 mb-1">{label}</p>
-      <p className={`text-3xl font-bold ${cls.split(' ').slice(2).join(' ')}`}>{value}</p>
-    </div>
   )
 }

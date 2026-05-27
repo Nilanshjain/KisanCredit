@@ -128,6 +128,7 @@ export async function submitApplication(data: LoanApplicationData): Promise<Appl
 
 export interface AdminMetricsOverview {
   window_hours: number;
+  // Model-only metrics (admin overrides excluded)
   total_predictions: number;
   avg_score: number;
   avg_confidence: number;
@@ -135,7 +136,12 @@ export interface AdminMetricsOverview {
   p95_latency_ms: number;
   decisions: Array<{ decision: string; count: number }>;
   score_histogram: Array<{ range_low: number; range_high: number; count: number }>;
+  // Operator activity in the same window
+  override_count: number;
+  override_decisions: Array<{ decision: string; count: number }>;
+  // NOW snapshots (not window-bound)
   pending_review_count: number;
+  errored_count: number;
   recent_buffer_size: number;
   drift_baseline_available: boolean;
 }

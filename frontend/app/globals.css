@@ -2,38 +2,13 @@
 
 /* Base styles */
 body {
-  background: linear-gradient(135deg, #FEFCE8 0%, #FEF3C7 25%, #FDE68A 50%, #FEF3C7 75%, #FEFCE8 100%);
-  background-size: 400% 400%;
-  animation: gradientShift 15s ease infinite;
+  background: #FAFAF9;
   color: #1C1917;
   min-height: 100vh;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "rlig" 1, "calt" 1;
-  position: relative;
-}
-
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.03;
-  background-image:
-    repeating-linear-gradient(0deg, transparent, transparent 2px, #92400E 2px, #92400E 4px),
-    repeating-linear-gradient(90deg, transparent, transparent 2px, #92400E 2px, #92400E 4px);
-  background-size: 50px 50px;
-  pointer-events: none;
-  z-index: 0;
-}
-
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1, "tnum" 1;
 }
 
 /* Custom scrollbar */
@@ -365,51 +340,16 @@ input::placeholder, select::placeholder, textarea::placeholder {
   background: linear-gradient(to bottom right, #876F51, #6D5840, #5A4936);
 }
 
-/* Rural themed backgrounds */
-.bg-rural-pattern {
-  background-color: #FFFBEB;
-  background-image:
-    radial-gradient(circle at 20% 80%, rgba(251, 191, 36, 0.1) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, rgba(34, 197, 94, 0.1) 0%, transparent 50%),
-    radial-gradient(circle at 40% 40%, rgba(245, 158, 11, 0.05) 0%, transparent 50%);
+/* Numeric / monospace utility for data-dense displays.
+   `tnum` keeps digits the same width so columns of numbers align. */
+.font-numeric {
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
-.bg-field-pattern {
-  background:
-    linear-gradient(135deg, #FEFCE8 0%, #FEF3C7 100%);
-  position: relative;
-}
-
-.bg-field-pattern::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image:
-    repeating-linear-gradient(
-      45deg,
-      transparent,
-      transparent 35px,
-      rgba(245, 158, 11, 0.03) 35px,
-      rgba(245, 158, 11, 0.03) 70px
-    );
-  pointer-events: none;
-}
-
-.text-gradient-harvest {
-  background: linear-gradient(to right, #F59E0B, #B45309);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.text-gradient-field {
-  background: linear-gradient(to right, #22C55E, #15803D);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+/* Hairline divider used between sections on long pages */
+.hairline {
+  border-color: #E7E5E4;
 }
 
 /* Shadow utilities */
