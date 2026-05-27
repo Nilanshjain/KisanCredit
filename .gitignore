@@ -48,6 +48,7 @@ ENV/
 CLAUDE.md
 PLAN.md
 .plan.md
+PROGRESS.md
 
 # Environment Variables
 .env
