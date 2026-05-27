@@ -36,8 +36,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             window_seconds=self.window_seconds
         )
 
+    # Ops paths that platform healthchecks hit constantly (Render probes
+    # /api/v1/health every few seconds from a single internal IP). Counting
+    # those against the per-IP limit causes the platform to mark the service
+    # unhealthy and restart-loop it. Skip the limiter for these.
+    _BYPASS_PATHS = {"/api/v1/health", "/api/v1/metrics", "/"}
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request with rate limiting."""
+        if request.url.path in self._BYPASS_PATHS:
+            return await call_next(request)
+
         # Get client IP
         client_ip = self._get_client_ip(request)
 
